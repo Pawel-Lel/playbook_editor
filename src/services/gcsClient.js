@@ -1,7 +1,7 @@
 // Minimal client for reading and writing JSON objects in a Google Cloud
 // Storage bucket directly from the browser — no backend required.
 //
-// Auth: uses Google Identity Services (GIS) token client to obtain a
+// Auth: uses Google Identity Services (GIS) token client to obtain 
 // short-lived OAuth2 access token with the `devstorage.read_write` scope.
 // The person signs in with a Google account that has at least the
 // "Storage Object Admin" (or Object Creator + Viewer) IAM role on the
