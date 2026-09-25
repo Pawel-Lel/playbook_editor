@@ -6,7 +6,7 @@
 // The person signs in with a Google account that has at least the
 // "Storage Object Admin" (or Object Creator + Viewer) IAM role on the
 // target bucket. Reads of a *publicly readable* object work without
-// signing in at all (no Authorization header is sent). 
+// signing in at all (no Authorization header is sent).
 //
 // Requirements on the bucket side (can't be done from here):
 //  - A CORS policy on the bucket allowing GET/POST/OPTIONS from this app's
