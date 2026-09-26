@@ -1,7 +1,8 @@
 // Serializes the live stores (playbook config + steps) back into the full
-// <LLM_INSTRUCTIONS> XML schema the app was seeded from: SETUP, GUIDELINES,
-// DIALOG_CONSTRAINTS, CLARIFICATION_RULES_POLICY, ESCALATION_HANDLING and
-// DIAGNOSTIC_FLOWS. See src/data/seedPlaybook.js and src/data/seedSteps.js.
+// <LLM_INSTRUCTIONS> XML schema: SETUP, GUIDELINES, DIALOG_CONSTRAINTS,
+// CLARIFICATION_RULES_POLICY, ESCALATION_HANDLING and DIAGNOSTIC_FLOWS. The
+// inverse of utils/xmlImport.js; the record shape is store/playbooks.js's
+// normalizeRecord().
 
 const IND = '    '
 const pad = (level) => IND.repeat(level)
@@ -610,9 +611,9 @@ function buildDiagnosticFlows(steps, playbook = null) {
 
 /**
  * Serializes the full playbook (config + steps) into an <LLM_INSTRUCTIONS>
- * XML document, matching the schema the app was originally seeded from.
- * @param {Object} playbook - shape of src/data/seedPlaybook.js
- * @param {Array} steps - shape of src/data/seedSteps.js
+ * XML document — the same schema utils/xmlImport.js parses.
+ * @param {Object} playbook - a playbook record (see normalizeRecord in store/playbooks.js)
+ * @param {Array} steps - that playbook's dialog steps
  * @returns {string}
  */
 export function buildLlmInstructionsXml(playbook, steps) {

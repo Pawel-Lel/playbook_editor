@@ -4,33 +4,37 @@ A Vue 3 + Vite app for managing LLM playbook instructions (the kind of
 `<LLM_INSTRUCTIONS>` XML used to drive a diagnostic voice or chat agent) and
 for visualizing how the dialog steps inside it connect to one another.
 
-The app ships pre-loaded with two example playbooks — a **diagnostic-flow**
-playbook (Heating and Hot Water: playbook setup, behavioural guidelines,
-dialog constraints, clarification rules, top-level escalation triggers, and
-23 dialog steps — the original 20 diagnostic questions plus the issue
-confirmation / re-diagnosis / refined-confirmation steps that close the
-loop) and a **router/triage** playbook (Triage: routes to other playbooks by
-category instead of asking its own questions — `Role`/`Objective`, 10
-routing categories, 20 keyword-matched clarification rules, and global
-NoMatch/NoInput reprompt logic, with no dialog steps of its own) — both
-fully editable from the UI, and each independently resettable to its own
-seed content. You can create as many additional playbooks as you like, each
-with its own independent settings and steps; the **Playbooks** page lists,
-creates, renames, duplicates and deletes them, and a switcher in the header
-always shows which one is active. Every other page (Steps, Flow map,
-Playbook settings, Export) always operates on the currently active playbook
-only.
+The app ships with **no built-in playbook data**. Playbooks are loaded from
+a Google Cloud Storage bucket (the **Cloud sync** page) or, optionally, from
+a folder on your computer (**Open local folder…** on the Playbooks page),
+one `.xml` file per playbook. Two playbook shapes are supported: a
+**diagnostic-flow** playbook (setup, behavioural guidelines, dialog
+constraints, clarification rules, escalation triggers and dialog steps) and
+a **router/triage** playbook (routes to other playbooks by category instead
+of asking its own questions — `Role`/`Objective`, routing categories,
+keyword-matched clarification rules and global NoMatch/NoInput reprompts).
+The **Playbooks** page lists, creates, renames, duplicates and deletes
+them, and a switcher in the header always shows which one is active. Every
+other page (Steps, Flow map, Playbook settings, Export) always operates on
+the currently active playbook only. Until anything is loaded, the app shows
+a single blank "Untitled playbook".
 
 ## Features
 
-- **HomeServe-themed** — the color palette (`src/assets/main.css`'s
+- **Neutral grey theme** — the color palette (`src/assets/main.css`'s
   `:root` custom properties: `--brand`, `--amber`, `--navy-*`, `--slate-*`,
-  `--paper*`, `--line`) is built around HomeServe's signature coral-red,
-  paired with a clean cool-neutral scale rather than a generic default
-  theme. Because every component sources its colors from these variables
-  rather than hardcoding hex values, the whole app's look flows from this
-  one place — swap the dozen or so values there to retheme it again.
+  `--paper*`, `--line`) is a cool grey scale; only the HomeServe logo keeps
+  its signature red (`--logo-red`), and red otherwise marks errors and
+  destructive actions (`--danger`). Every component sources its colors
+  from these variables, so the whole app's look flows from this one place.
 
+- **Save to a local folder** — the **Save** button in the header writes the
+  active playbook's `.xml` into a folder you choose (creating or
+  overwriting the file), using the same filename it has in the bucket, so
+  the folder mirrors the bucket. **Open local folder…** on the Playbooks
+  page loads every `.xml` file in a folder back in. Folder access uses the
+  File System Access API (Chrome, Edge); other browsers download the file
+  on Save instead, and can't open folders.
 - **Import XML directly — no Cloud Storage required** — "Import from XML…"
   on the Playbooks page parses a pasted or uploaded `<LLM_INSTRUCTIONS>` (or
   bare `<DIAGNOSTIC_FLOWS>`) document into a brand-new playbook, entirely
@@ -52,15 +56,14 @@ only.
   playbook "shape" is active (no dialog steps but at least one routing
   category means router/triage) and renders a genuinely different set of
   sections rather than one form trying to cover both. Diagnostic-flow
-  playbooks (like Heating and Hot Water) get `SETUP`/context-handling,
+  playbooks get `SETUP`/context-handling,
   `GUIDELINES`, `DIALOG_CONSTRAINTS`, a plain `CLARIFICATION_RULES_POLICY`,
-  and `ESCALATION_HANDLING`. Router/triage playbooks (like the seeded
-  Triage example) get `Role`/`Objective`, `GUIDELINES`,
+  and `ESCALATION_HANDLING`. Router/triage playbooks get `Role`/`Objective`, `GUIDELINES`,
   `ESCALATION_HANDLING` with its "No-match / no-input reprompts"
   sub-section, a `CLARIFICATION_RULES` wrapper with its own shared
   condition plus `keyword=`-matched rules, and `Routing logic` (categories
   with trigger phrases and an action). Both layouts save automatically and
-  share the same Export/Import/Reset actions. See "Data model" below for
+  share the same Export/Import/Clear actions. See "Data model" below for
   the details.
 - **Create / Read / Update / Delete** dialog steps: ID, topic, issue summary,
   step-specific instructions, the initial prompt, NoMatch/NoInput reprompts,
@@ -82,7 +85,7 @@ only.
   classification's `next_step` as a node/edge diagram, auto-laid-out into
   columns by distance from the entry steps. Click a node to trace its
   incoming/outgoing links; double-click to jump straight to editing that
-  step. Escalation paths are drawn in amber; a fifth node kind (dynamic,
+  step. Escalation paths are drawn dashed; a fifth node kind (dynamic,
   purple) marks runtime placeholders such as
   `[DYNAMICALLY_GENERATED_QUESTION_FLOW]` that the source XML resolves at
   runtime rather than pointing at a fixed step. For a router/triage-style
@@ -97,9 +100,9 @@ only.
   with a resolved/not-found badge and a one-click "Switch →" per row —
   independent of the diagram.
 - **Local persistence** — all edits are saved to the browser's
-  `localStorage`, so changes survive a refresh. "Reset to seed data" restores
-  the original parsed-from-XML content at any time (steps and playbook
-  settings reset independently).
+  `localStorage`, so changes survive a refresh. "Clear all steps" and
+  "Clear settings" empty the active playbook's steps or settings
+  independently.
 - **Cloud Storage sync** — the "Cloud sync" page reads and writes your
   playbooks to a Google Cloud Storage bucket directly from the browser (no
   backend) — one `.xml` file per playbook. Signing in automatically loads
@@ -119,10 +122,6 @@ only.
 
 ```
 src/
-  data/
-    seedSteps.js        # Dialog steps parsed from the source XML
-    seedPlaybook.js      # Setup/guidelines/constraints/escalations seed data (Heating and Hot Water)
-    seedTriagePlaybook.js # Same, for the Triage (router/triage-style) example playbook
   store/
     playbooks.js          # Core store: collection of playbooks + active selection,
                            # localStorage persistence + cloud sync registration
@@ -131,6 +130,7 @@ src/
     cloudSync.js          # GCS bucket config, auth status, load/save orchestration
   services/
     gcsClient.js          # Google Identity Services auth + GCS JSON API (fetch)
+    localFolder.js        # File System Access API: pick/remember a folder, read/write .xml files
   components/
     GuidelinesEditor.vue      # POLICY CRUD (text / structured / raw shapes), both layouts
     EscalationsEditor.vue     # ESCALATION CRUD, both layouts
@@ -269,11 +269,11 @@ which one it's looking at — no steps but at least one routing category means
 router/triage — and renders a completely different set of sections, rather
 than one form trying to cover both):
 
-- **Diagnostic-flow** (like the seeded Heating and Hot Water example):
+- **Diagnostic-flow** (e.g. a Heating and Hot Water playbook):
   `CONTEXT_HANDLING`, `DIALOG_CONSTRAINTS`, a plain
   `CLARIFICATION_RULES_POLICY`, per-step `DIALOG_STEP`s. No routing logic,
   no global reprompts — this shape's steps carry their own NoMatch/NoInput.
-- **Router/triage** (like the seeded Triage example): `ROLE`/`OBJECTIVE`
+- **Router/triage** (e.g. a Triage playbook): `ROLE`/`OBJECTIVE`
   instead of context handling, `ROUTING_LOGIC` instead of dialog steps, a
   `CLARIFICATION_RULES` wrapper with its own shared `condition=` and
   `keyword=` rules, and a global No-match/No-input reprompt shown once
@@ -298,8 +298,8 @@ block.
 ### Full-fidelity XML (Triage.xml)
 
 Everything in a router/triage file like `Triage.xml` is now real, editable
-data rather than hardcoded export boilerplate, and exporting the seeded
-Triage playbook reproduces `Triage.xml` exactly (apart from whitespace):
+data rather than hardcoded export boilerplate, and importing then
+exporting `Triage.xml` reproduces it exactly (apart from whitespace):
 
 - **Structured policies** — each guideline has a `shape`: `text`,
   `structured` or `raw`. Structured policies expose `trigger`,
@@ -326,9 +326,7 @@ Triage playbook reproduces `Triage.xml` exactly (apart from whitespace):
   XML bodies are de-indented so repeated import → export cycles are stable.
 
 Older saved data is upgraded in place on load (`normalizeRecord` in
-`store/playbooks.js`). A Triage playbook already saved in your browser keeps
-its old contents until you click **Reset to seed data** or re-import
-`Triage.xml`.
+`store/playbooks.js`).
 
 A few structural quirks are normalized transparently:
 - An `<ESCALATION>` may use either `condition="..."` or `type="..."` for
@@ -393,33 +391,17 @@ The `guidelines` policies (a simple one-liner, a trigger/action pair, or a
 `rawXml` escape hatch for structurally complex policies like
 `AGENT_ESCALATION_OVERRIDE`), `dialogConstraints`, `clarificationRules`, and
 `escalations` shapes are exactly what `PlaybookSettingsView.vue` edits and
-`xmlExport.js` serializes — see `src/data/seedPlaybook.js` for a fully
-populated example of each.
+`xmlExport.js` serializes.
 
-Some classifications point at IDs that are referenced but never defined as
-their own `<DIALOG_STEP>` in the source XML (`Default_Escalation_Hot_Water`,
-`Fulfilment_Escalation`, `Data_Retrieval_Phase`,
-`FINAL_SUMMARY_CONFIRMATION_NO`, and the runtime placeholder
-`[DYNAMICALLY_GENERATED_QUESTION_FLOW]`). These are kept as terminal/flow/
-dynamic reference nodes on the flow map so the graph stays complete, but
-they don't have editable step records of their own — create a step with
-that same ID if you want to flesh one out.
-
-Only the built-in example playbooks — Heating and Hot Water
-(`id: 'heating-and-hot-water'`, `SEED_PLAYBOOK_ID`) and Triage
-(`id: 'triage'`, `SEED_TRIAGE_PLAYBOOK_ID`), both exported from
-`store/playbooks.js` alongside the generic `isBuiltInSeedId(id)` check —
-have real seed content to restore to; their "Reset to seed data" buttons
-put back that playbook's own original example content (`getSeedConfigFor(id)`
-for the settings, `getSeedStepsFor(id)` for the steps — empty for Triage,
-which has no dialog steps). Every other playbook you create starts empty
-and its equivalent buttons ("Clear all steps" / "Clear settings") just
-clear it back to blank, since there's no seed content to restore for a
-playbook you made yourself. Adding a third built-in example playbook means
-adding one more entry to the `SEED_REGISTRY` map in `store/playbooks.js`
-(and a matching `src/data/seed*.js` config file) — nothing else needs to
-change, since every other piece of the app already generalizes over "any
-number of seed playbooks".
+Some classifications point at IDs that aren't defined as their own
+`<DIALOG_STEP>` in the playbook (e.g. `Fulfilment_Escalation`, or the
+runtime placeholder `[DYNAMICALLY_GENERATED_QUESTION_FLOW]`). These are
+kept as reference nodes on the flow map so the graph stays complete, and
+their kind is inferred from the ID: `[BRACKETED]` means a dynamic runtime
+placeholder, an ID containing `escalation` means an escalation flow, and
+anything else is shown as unresolved. They don't have editable step
+records of their own — create a step with that same ID if you want to
+flesh one out.
 
 ## Notes on persistence
 

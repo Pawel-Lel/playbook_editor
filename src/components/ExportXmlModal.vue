@@ -48,8 +48,8 @@ function onOverlayClick(e) {
       </div>
 
       <p class="modal__hint">
-        Reconstructed from every step currently in the store, in the same schema the app was
-        originally seeded from.
+        Reconstructed from the active playbook's current settings and steps, in the same
+        &lt;LLM_INSTRUCTIONS&gt; schema the app imports.
       </p>
 
       <pre class="xml-preview mono"><code>{{ xml }}</code></pre>

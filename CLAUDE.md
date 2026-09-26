@@ -23,7 +23,7 @@ There is no test runner, linter, or formatter configured. `dom-stub.mjs` is a sm
 - `src/store/playbooks.js` is the single source of truth. It holds a reactive `{ playbooks: [...], activePlaybookId }` that is persisted whole to `localStorage` under `playbook-editor:playbooks:v1`. Each playbook record contains its own `steps`.
 - `src/store/steps.js` and `src/store/playbook.js` hold **no state**. They are thin views scoped to `getActivePlaybookRecord()` and expose CRUD APIs (`createStep`, `updateStep`, `addItem`, `updateItem`, `removeItem`, …). Every page except Playbooks works on the active playbook only.
 - `normalizeRecord()` and the `PARSED_FIELDS` list in `playbooks.js` define the canonical record shape. Every import and load path goes through them. To add a playbook-level field, add it to `PARSED_FIELDS`/`normalizeRecord`, `xmlImport.js`, `xmlExport.js`, and `playbook.js`'s `toExportPayload()`. `toExportPayload()` is the one place every export call-site gets playbook data from.
-- Built-in seeds (`heating-and-hot-water`, `triage`) are registered in `SEED_REGISTRY` and backed by `src/data/seed*.js`. "Reset" restores seed content only for those ids. Any other playbook resets to blank.
+- The app ships with no playbook data. Playbooks are loaded from a GCS bucket (Cloud sync) or a local folder, both of which replace the whole collection through `replaceCollection()`. With nothing cached, the app starts with one blank "Untitled playbook", because every view assumes an active playbook exists. A record remembers where it came from in `sourceObjectPath` (bucket) and `localFileName` (local folder), so saves overwrite the same files.
 
 ### XML round-trip is the core invariant
 - `src/utils/xmlExport.js` (`buildLlmInstructionsXml`) and `src/utils/xmlImport.js` (`parsePlaybookXml`) mirror each other. Import → export must reproduce the source. That includes XML comments (stacked `<!-- -->` blocks before elements, `<!-- Note: … -->` on escalations), attribute-name variants (`attrName: 'condition' | 'keyword'`), section order (`resolveSectionOrder`), and indentation (the importer dedents policy bodies so the exporter doesn't drift them rightward). When you change one side, change the other.
@@ -39,8 +39,10 @@ There is no test runner, linter, or formatter configured. `dom-stub.mjs` is a sm
 - `src/store/cloudSync.js` orchestrates load and save and **never imports `playbooks.js`**. Instead, `playbooks.js` calls `registerSyncTarget('playbooks', { loadAll, saveAll, saveOne })` at module load. This avoids a circular import, so keep the dependency one-directional.
 - The bucket holds one `.xml` file per playbook. A playbook remembers its `sourceObjectPath`, so renaming the playbook doesn't rename its file. Auto-save debounces a save of only the active playbook.
 
-### Local folder save
-The header's **Save** button calls `saveActiveToLocalFolder()` in `playbooks.js`, which writes the active playbook's `.xml` into a folder on disk through `src/services/localFolder.js`. That service uses the File System Access API and remembers the folder handle in IndexedDB. The filename matches the playbook's bucket filename. Browsers without the API (Firefox, Safari) get a plain download instead.
+### Local folder
+`src/services/localFolder.js` uses the File System Access API and remembers the chosen folder handle in IndexedDB.
+- The header's **Save** button calls `saveActiveToLocalFolder()` in `playbooks.js`, which writes the active playbook's `.xml`. Browsers without the API (Firefox, Safari) get a plain download instead.
+- The Playbooks page's **Open local folder…** calls `loadAllFromLocalFolder()`, which reads every `.xml` file directly in the folder. It confirms only after reading the folder, because a dialog shown before the folder picker would use up the click's user activation.
 
 ### Runtime config
 `src/config/runtimeConfig.js` resolves `GOOGLE_OAUTH_CLIENT_ID`, `GCS_BUCKET`, and `GCS_OBJECT_PREFIX` in this order:

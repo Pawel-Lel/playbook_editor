@@ -3,13 +3,11 @@ import { ref, computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useStepsStore } from '../store/steps.js'
 import { usePlaybookStore } from '../store/playbook.js'
-import { usePlaybooksStore } from '../store/playbooks.js'
 import { buildLlmInstructionsXml, exportFileName } from '../utils/xmlExport.js'
 import ExportXmlModal from '../components/ExportXmlModal.vue'
 
 const store = useStepsStore()
 const playbook = usePlaybookStore()
-const playbooksStore = usePlaybooksStore()
 const search = ref('')
 const confirmingId = ref(null)
 const showExport = ref(false)
@@ -42,14 +40,9 @@ function confirmDelete(id) {
   confirmingId.value = null
 }
 
-const resetLabel = computed(() => (playbooksStore.isSeedPlaybook.value ? 'Reset to seed data' : 'Clear all steps'))
-
-function resetData() {
-  const msg = playbooksStore.isSeedPlaybook.value
-    ? 'Reset all steps back to the original seed data from the source XML? Your edits will be lost.'
-    : 'Remove every step from this playbook? This cannot be undone.'
-  if (confirm(msg)) {
-    store.resetToSeed()
+function clearAllSteps() {
+  if (confirm('Remove every step from this playbook? This cannot be undone.')) {
+    store.clearSteps()
   }
 }
 </script>
@@ -65,7 +58,7 @@ function resetData() {
         </p>
       </div>
       <div class="page-head__actions">
-        <button class="btn btn-secondary" @click="resetData">{{ resetLabel }}</button>
+        <button class="btn btn-secondary" @click="clearAllSteps">Clear all steps</button>
         <button class="btn btn-secondary" @click="showExport = true">Export XML</button>
         <RouterLink to="/steps/new" class="btn btn-primary">+ New step</RouterLink>
       </div>

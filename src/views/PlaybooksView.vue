@@ -1,7 +1,8 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { usePlaybooksStore, isBuiltInSeedId } from '../store/playbooks.js'
+import { usePlaybooksStore } from '../store/playbooks.js'
+import { isSupported as canOpenFolder } from '../services/localFolder.js'
 import ImportXmlModal from '../components/ImportXmlModal.vue'
 
 const router = useRouter()
@@ -18,6 +19,28 @@ const renamingId = ref(null)
 const renameValue = ref('')
 
 const confirmingDeleteId = ref(null)
+
+const folderLoading = ref(false)
+const folderResult = ref(null) // { folderName, loadedCount, errors } | null
+const folderError = ref('')
+
+async function openLocalFolder(pickFolder) {
+  folderLoading.value = true
+  folderError.value = ''
+  folderResult.value = null
+  try {
+    const result = await store.loadAllFromLocalFolder({
+      pickFolder,
+      confirmReplace: (count) =>
+        confirm(`Replace every playbook in this browser with the ${count} playbook(s) found in this folder? Unsaved changes will be lost.`)
+    })
+    if (!result.cancelled) folderResult.value = result
+  } catch (e) {
+    if (e.name !== 'AbortError') folderError.value = e.message
+  } finally {
+    folderLoading.value = false
+  }
+}
 
 const sortedPlaybooks = computed(() =>
   [...store.playbooks.value].sort((a, b) => a.playbookName.localeCompare(b.playbookName))
@@ -107,12 +130,47 @@ function confirmDelete(id) {
         <p class="page-sub">
           Each playbook has its own setup, guidelines, escalation rules and set of diagnostic
           steps. The Steps list, Flow map and Playbook settings pages always show the active one.
+          Load playbooks from a Google Cloud Storage bucket on the
+          <RouterLink to="/cloud-sync">Cloud sync</RouterLink> page, or from a folder on this computer.
         </p>
       </div>
       <div class="page-head__actions">
+        <button
+          class="btn btn-secondary"
+          :disabled="folderLoading || !canOpenFolder()"
+          :title="canOpenFolder() ? 'Load every .xml file in the last-used folder' : 'Opening folders needs Chrome or Edge'"
+          @click="openLocalFolder(false)"
+        >
+          {{ folderLoading ? 'Loading…' : 'Open local folder…' }}
+        </button>
+        <button
+          v-if="canOpenFolder()"
+          class="btn btn-ghost"
+          :disabled="folderLoading"
+          title="Choose a different folder, then load it"
+          @click="openLocalFolder(true)"
+        >
+          Change folder
+        </button>
         <button class="btn btn-secondary" @click="openImport">Import from XML…</button>
         <button class="btn btn-primary" @click="openCreate">+ New playbook</button>
       </div>
+    </div>
+
+    <p v-if="folderError" class="form-error">{{ folderError }}</p>
+    <div v-if="folderResult" class="folder-result" :class="{ 'has-errors': folderResult.errors.length }">
+      <template v-if="folderResult.loadedCount">
+        Loaded {{ folderResult.loadedCount }} playbook{{ folderResult.loadedCount === 1 ? '' : 's' }} from
+        <span class="mono">{{ folderResult.folderName }}/</span>.
+      </template>
+      <template v-else>
+        No playbooks loaded from <span class="mono">{{ folderResult.folderName }}/</span> — nothing was changed.
+      </template>
+      <ul v-if="folderResult.errors.length">
+        <li v-for="err in folderResult.errors" :key="err.name">
+          <span class="mono">{{ err.name }}</span>: {{ err.message }}
+        </li>
+      </ul>
     </div>
 
     <ul class="playbook-list">
@@ -125,7 +183,6 @@ function confirmDelete(id) {
         <div class="playbook-card__main">
           <div class="playbook-card__head">
             <span v-if="p.id === store.activePlaybookId.value" class="badge badge-terminal">Active</span>
-            <span v-if="isBuiltInSeedId(p.id)" class="badge badge-flow">Example</span>
             <span class="mono playbook-card__id">{{ p.id }}</span>
           </div>
 
@@ -305,6 +362,24 @@ function confirmDelete(id) {
   justify-content: flex-end;
   gap: 0.6rem;
   margin-top: 1.2rem;
+}
+.folder-result {
+  background: #eaf3ec;
+  border: 1px solid #cfe3d3;
+  color: var(--ok);
+  padding: 0.6em 0.9em;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+.folder-result.has-errors {
+  background: #f8ece9;
+  border-color: #e0b3a6;
+  color: var(--danger);
+}
+.folder-result ul {
+  margin: 0.4em 0 0;
+  padding-left: 1.2em;
 }
 .form-error {
   background: #f8ece9;

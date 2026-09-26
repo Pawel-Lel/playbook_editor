@@ -40,14 +40,9 @@ function repromptComment(r) {
   return r.data.comment === undefined || r.data.comment === null ? DEFAULT_REPROMPT_COMMENTS[r.key] : r.data.comment
 }
 
-const resetLabel = computed(() => (playbooksStore.isSeedPlaybook.value ? 'Reset to seed data' : 'Clear settings'))
-
-function resetPlaybook() {
-  const msg = playbooksStore.isSeedPlaybook.value
-    ? 'Reset playbook settings back to the seed data? Your edits will be lost.'
-    : "Clear this playbook's settings? This cannot be undone."
-  if (confirm(msg)) {
-    playbook.resetToSeed()
+function clearPlaybookSettings() {
+  if (confirm("Clear this playbook's settings? This cannot be undone.")) {
+    playbook.clearSettings()
   }
 }
 
@@ -85,7 +80,7 @@ function handleImportedXml(xmlText) {
         </p>
       </div>
       <div class="page-head__actions">
-        <button class="btn btn-secondary" @click="resetPlaybook">{{ resetLabel }}</button>
+        <button class="btn btn-secondary" @click="clearPlaybookSettings">Clear settings</button>
         <button class="btn btn-secondary" @click="openImport">Import XML…</button>
         <button class="btn btn-secondary" @click="showExport = true">Export XML</button>
       </div>

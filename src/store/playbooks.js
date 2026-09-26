@@ -1,7 +1,4 @@
 import { reactive, watch, computed } from 'vue'
-import { seedSteps } from '../data/seedSteps.js'
-import { seedPlaybook } from '../data/seedPlaybook.js'
-import { seedTriagePlaybook } from '../data/seedTriagePlaybook.js'
 import { registerSyncTarget, scheduleAutoSave } from './cloudSync.js'
 import * as gcs from '../services/gcsClient.js'
 import * as localFolder from '../services/localFolder.js'
@@ -10,40 +7,6 @@ import { buildLlmInstructionsXml, downloadTextFile } from '../utils/xmlExport.js
 
 const STORAGE_KEY = 'playbook-editor:playbooks:v1'
 
-// The playbooks the app ships with as built-in examples. Only these ids'
-// "reset" restores real seed content — any other playbook resets to blank.
-// Registry keyed by id so this generalizes to any number of seed playbooks:
-// each entry's `config` is the raw playbook-config shape (matches
-// seedPlaybook.js), and `steps` is that playbook's seeded dialog steps
-// (empty for a router/triage-style playbook, which has none).
-export const SEED_PLAYBOOK_ID = 'heating-and-hot-water'
-export const SEED_TRIAGE_PLAYBOOK_ID = 'triage'
-
-const SEED_REGISTRY = {
-  [SEED_PLAYBOOK_ID]: { config: seedPlaybook, steps: seedSteps },
-  [SEED_TRIAGE_PLAYBOOK_ID]: { config: seedTriagePlaybook, steps: [] }
-}
-
-export function isBuiltInSeedId(id) {
-  return Object.prototype.hasOwnProperty.call(SEED_REGISTRY, id)
-}
-
-// A fresh deep copy of the raw config (no id/sourceObjectPath/steps) for the
-// given seed id — what store/playbook.js's resetToSeed() restores fields
-// from. Returns null for a non-seed (user-created) playbook id.
-export function getSeedConfigFor(id) {
-  const entry = SEED_REGISTRY[id]
-  return entry ? JSON.parse(JSON.stringify(entry.config)) : null
-}
-
-// A fresh deep copy of the seed steps array for the given seed id — what
-// store/steps.js's resetToSeed() restores from. Empty for a seed playbook
-// with no steps of its own (e.g. Triage), and for any non-seed id.
-export function getSeedStepsFor(id) {
-  const entry = SEED_REGISTRY[id]
-  return entry ? JSON.parse(JSON.stringify(entry.steps)) : []
-}
-
 function slugify(value) {
   const base = String(value || '')
     .trim()
@@ -51,16 +14,6 @@ function slugify(value) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
   return base || 'playbook'
-}
-
-function buildSeedRecord(id) {
-  const entry = SEED_REGISTRY[id]
-  return normalizeRecord({
-    id,
-    sourceObjectPath: '', // not backed by a bucket file until first saved there
-    ...JSON.parse(JSON.stringify(entry.config)),
-    steps: JSON.parse(JSON.stringify(entry.steps))
-  })
 }
 
 // Default shape for a global reprompt with no data yet — a prompt plus the
@@ -127,6 +80,7 @@ function blankPlaybookRecord(id, name) {
   return {
     id,
     sourceObjectPath: '',
+    localFileName: '',
     playbookName: name,
     setup: { contextInstruction: '', contextConstraint: '', role: '', objective: '' },
     guidelines: [],
@@ -144,11 +98,15 @@ function blankPlaybookRecord(id, name) {
   }
 }
 
+// No data ships with the app: playbooks come from a Google Cloud Storage
+// bucket (Cloud sync) or a local folder. Until one is loaded, a single
+// blank playbook keeps the "there is always an active playbook" invariant
+// every view relies on.
 function defaultState() {
-  const records = Object.keys(SEED_REGISTRY).map((id) => buildSeedRecord(id))
+  const record = blankPlaybookRecord('untitled-playbook', 'Untitled playbook')
   return {
-    playbooks: records,
-    activePlaybookId: records[0].id
+    playbooks: [record],
+    activePlaybookId: record.id
   }
 }
 
@@ -166,7 +124,7 @@ function loadInitial() {
       }
     }
   } catch (e) {
-    console.warn('Could not read saved playbooks, falling back to seed data.', e)
+    console.warn('Could not read saved playbooks, starting with a blank playbook.', e)
   }
   return defaultState()
 }
@@ -237,8 +195,11 @@ function objectPathFor(prefix, fileNameWithoutExt) {
   return `${normalizedPrefix(prefix)}${fileNameWithoutExt}.xml`
 }
 
-function playbookRecordFromParsed(objectName, parsed, existingIds) {
-  const displayName = parsed.playbookName || objectName.replace(/\.xml$/i, '')
+// `origin` records where the file came from — { sourceObjectPath } for a
+// bucket object, { localFileName } for a file in a local folder — so later
+// saves overwrite that same file.
+function playbookRecordFromParsed(fileName, parsed, existingIds, origin) {
+  const displayName = parsed.playbookName || fileName.replace(/\.xml$/i, '')
   const base = slugify(displayName)
   let id = base
   let n = 2
@@ -247,11 +208,19 @@ function playbookRecordFromParsed(objectName, parsed, existingIds) {
     n += 1
   }
   existingIds.add(id)
-  const record = { id, sourceObjectPath: objectName, playbookName: displayName }
+  const record = { id, sourceObjectPath: '', localFileName: '', ...origin, playbookName: displayName }
   PARSED_FIELDS.forEach((k) => {
     if (parsed[k] !== undefined) record[k] = parsed[k]
   })
   return normalizeRecord(record)
+}
+
+// Replaces the local collection wholesale with what a bucket or folder
+// load found. Leaves it untouched when nothing loaded.
+function replaceCollection(records) {
+  if (!records.length) return
+  state.playbooks.splice(0, state.playbooks.length, ...records)
+  state.activePlaybookId = records[0].id
 }
 
 /**
@@ -271,21 +240,18 @@ async function loadAllFromBucket(bucket, prefix) {
       const text = await gcs.readTextObject(bucket, obj.name)
       if (text === null) continue
       const parsed = parsePlaybookXml(text)
-      loaded.push(playbookRecordFromParsed(obj.name, parsed, existingIds))
+      loaded.push(playbookRecordFromParsed(obj.name.split('/').pop(), parsed, existingIds, { sourceObjectPath: obj.name }))
     } catch (e) {
       errors.push({ name: obj.name, message: e.message })
     }
   }
-  if (loaded.length) {
-    state.playbooks.splice(0, state.playbooks.length, ...loaded)
-    state.activePlaybookId = loaded[0].id
-  }
+  replaceCollection(loaded)
   return { loadedCount: loaded.length, errors }
 }
 
 async function saveOneRecordToBucket(bucket, prefix, record) {
   if (!record) return
-  const objectPath = record.sourceObjectPath || objectPathFor(prefix, sanitizeFileName(record.playbookName))
+  const objectPath = record.sourceObjectPath || objectPathFor(prefix, localFileNameFor(record).replace(/\.xml$/i, ''))
   const xml = buildLlmInstructionsXml(record, record.steps)
   await gcs.writeTextObject(bucket, objectPath, xml)
   record.sourceObjectPath = objectPath
@@ -308,6 +274,7 @@ async function saveActiveToBucket(bucket, prefix) {
 // ---------------------------------------------------------------------
 
 function localFileNameFor(record) {
+  if (record.localFileName) return record.localFileName
   if (record.sourceObjectPath) return record.sourceObjectPath.split('/').pop()
   return `${sanitizeFileName(record.playbookName)}.xml`
 }
@@ -330,7 +297,43 @@ async function saveActiveToLocalFolder({ pickFolder = false } = {}) {
   }
   if (pickFolder) await localFolder.chooseFolder()
   const folderName = await localFolder.writeTextFile(fileName, xml)
+  record.localFileName = fileName
   return { fileName, folderName }
+}
+
+/**
+ * Loads every .xml file in the remembered local folder (prompting for one
+ * the first time, or when pickFolder is set) and replaces the local
+ * collection with them, exactly like a bucket load. A file that fails to
+ * parse is skipped and reported back. Must be called from a click handler.
+ * confirmReplace(count) runs after the folder is read — not before, since
+ * a dialog ahead of the folder picker would use up the click's user
+ * activation — and returning false leaves the collection unchanged.
+ * @param {{ pickFolder?: boolean, confirmReplace?: (count: number) => boolean }} opts
+ * @returns {Promise<{ folderName: string, loadedCount: number, errors: Array<{name: string, message: string}>, cancelled?: boolean }>}
+ */
+async function loadAllFromLocalFolder({ pickFolder = false, confirmReplace } = {}) {
+  if (!localFolder.isSupported()) {
+    throw new Error('This browser cannot open local folders — use Chrome or Edge, or import a single file instead.')
+  }
+  if (pickFolder) await localFolder.chooseFolder()
+  const { folderName, files } = await localFolder.readXmlFiles()
+  const existingIds = new Set()
+  const loaded = []
+  const errors = []
+  for (const file of files) {
+    try {
+      const parsed = parsePlaybookXml(file.text)
+      loaded.push(playbookRecordFromParsed(file.name, parsed, existingIds, { localFileName: file.name }))
+    } catch (e) {
+      errors.push({ name: file.name, message: e.message })
+    }
+  }
+  if (loaded.length && confirmReplace && !confirmReplace(loaded.length)) {
+    return { folderName, loadedCount: 0, errors, cancelled: true }
+  }
+  replaceCollection(loaded)
+  return { folderName, loadedCount: loaded.length, errors }
 }
 
 registerSyncTarget('playbooks', {
@@ -350,7 +353,6 @@ export function usePlaybooksStore() {
   })
 
   const activePlaybook = computed(() => getActivePlaybookRecord())
-  const isSeedPlaybook = computed(() => isBuiltInSeedId(state.activePlaybookId))
 
   function setActivePlaybookId(id) {
     activePlaybookId.value = id
@@ -380,7 +382,8 @@ export function usePlaybooksStore() {
     const clone = JSON.parse(JSON.stringify(source))
     clone.id = uniqueId(slugify(`${source.playbookName}-copy`))
     clone.playbookName = `${source.playbookName} (copy)`
-    clone.sourceObjectPath = '' // must save to its own new file, never the source's
+    clone.sourceObjectPath = '' // must save to its own new files, never the source's
+    clone.localFileName = ''
     state.playbooks.push(clone)
     state.activePlaybookId = clone.id
     return clone
@@ -395,7 +398,7 @@ export function usePlaybooksStore() {
     const parsed = parsePlaybookXml(xmlText)
     const displayName = parsed.playbookName || 'Imported playbook'
     const id = uniqueId(slugify(displayName))
-    const record = { id, sourceObjectPath: '', playbookName: displayName }
+    const record = { id, sourceObjectPath: '', localFileName: '', playbookName: displayName }
     PARSED_FIELDS.forEach((k) => {
       if (parsed[k] !== undefined) record[k] = parsed[k]
     })
@@ -435,7 +438,6 @@ export function usePlaybooksStore() {
     playbooks,
     activePlaybookId,
     activePlaybook,
-    isSeedPlaybook,
     setActivePlaybookId,
     createPlaybook,
     renamePlaybook,
@@ -443,6 +445,7 @@ export function usePlaybooksStore() {
     deletePlaybook,
     importPlaybookFromXml,
     replaceActivePlaybookFromXml,
-    saveActiveToLocalFolder
+    saveActiveToLocalFolder,
+    loadAllFromLocalFolder
   }
 }

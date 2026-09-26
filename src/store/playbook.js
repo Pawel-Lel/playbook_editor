@@ -1,5 +1,5 @@
 import { computed } from 'vue'
-import { getActivePlaybookRecord, isBuiltInSeedId, getSeedConfigFor, normalizeRecord } from './playbooks.js'
+import { getActivePlaybookRecord } from './playbooks.js'
 import { blankGuideline } from '../utils/xmlImport.js'
 
 let itemCounter = Date.now()
@@ -153,38 +153,23 @@ export function usePlaybookStore() {
     if (idx !== -1) list.splice(idx, 1)
   }
 
-  // Only a built-in example playbook has real seed content to restore to;
-  // every other playbook just gets its settings cleared back to blank.
-  function resetToSeed() {
+  function clearSettings() {
     const active = record()
-    if (isBuiltInSeedId(active.id)) {
-      const fresh = getSeedConfigFor(active.id)
-      Object.keys(fresh).forEach((key) => {
-        active[key] = fresh[key]
-      })
-      // Seed fields a given seed doesn't define (e.g. Heating has no
-      // sectionOrder) go back to their defaults too.
-      if (!('sectionOrder' in fresh)) active.sectionOrder = []
-      if (!('sectionComments' in fresh)) active.sectionComments = {}
-      if (!('includeXmlDeclaration' in fresh)) active.includeXmlDeclaration = true
-      normalizeRecord(active)
-    } else {
-      active.setup.contextInstruction = ''
-      active.setup.contextConstraint = ''
-      active.setup.role = ''
-      active.setup.objective = ''
-      active.guidelines.splice(0, active.guidelines.length)
-      active.dialogConstraints.splice(0, active.dialogConstraints.length)
-      active.clarificationRules.splice(0, active.clarificationRules.length)
-      active.clarificationRulesCondition = ''
-      active.escalations.splice(0, active.escalations.length)
-      active.globalNoMatch = { prompt: '', action: { toolType: '', toolId: '', flowId: '', parameterName: '', parameterValue: '' } }
-      active.globalNoInput = { prompt: '', action: { toolType: '', toolId: '', flowId: '', parameterName: '', parameterValue: '' } }
-      active.routingCategories.splice(0, active.routingCategories.length)
-      active.sectionOrder = []
-      active.sectionComments = {}
-      active.includeXmlDeclaration = true
-    }
+    active.setup.contextInstruction = ''
+    active.setup.contextConstraint = ''
+    active.setup.role = ''
+    active.setup.objective = ''
+    active.guidelines.splice(0, active.guidelines.length)
+    active.dialogConstraints.splice(0, active.dialogConstraints.length)
+    active.clarificationRules.splice(0, active.clarificationRules.length)
+    active.clarificationRulesCondition = ''
+    active.escalations.splice(0, active.escalations.length)
+    active.globalNoMatch = { prompt: '', action: { toolType: '', toolId: '', flowId: '', parameterName: '', parameterValue: '' } }
+    active.globalNoInput = { prompt: '', action: { toolType: '', toolId: '', flowId: '', parameterName: '', parameterValue: '' } }
+    active.routingCategories.splice(0, active.routingCategories.length)
+    active.sectionOrder = []
+    active.sectionComments = {}
+    active.includeXmlDeclaration = true
   }
 
   // Single source of truth for "everything buildLlmInstructionsXml needs
@@ -230,7 +215,7 @@ export function usePlaybookStore() {
     moveItem,
     addActionStep,
     removeActionStep,
-    resetToSeed,
+    clearSettings,
     toExportPayload
   }
 }

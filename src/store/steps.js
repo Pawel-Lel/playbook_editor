@@ -1,6 +1,5 @@
 import { computed } from 'vue'
-import { externalTargets } from '../data/seedSteps.js'
-import { getActivePlaybookRecord, isBuiltInSeedId, getSeedStepsFor } from './playbooks.js'
+import { getActivePlaybookRecord } from './playbooks.js'
 
 let idCounter = Date.now()
 function newId(prefix) {
@@ -13,6 +12,16 @@ function slugify(value) {
     .trim()
     .replace(/[^a-zA-Z0-9_[\]]+/g, '_')
     .replace(/^_+|_+$/g, '')
+}
+
+// A next_step that isn't one of this playbook's own steps. The XML doesn't
+// say what such a target is, so infer it from naming conventions: a
+// "[BRACKETED]" id is a runtime placeholder, an "..._Escalation" id hands
+// off to an escalation flow; anything else is flagged as unresolved.
+function externalTarget(id) {
+  if (/^\[.*\]$/.test(id)) return { id, kind: 'dynamic', label: `${id} (runtime placeholder)` }
+  if (/escalation/i.test(id)) return { id, kind: 'flow', label: `${id} (flow)` }
+  return { id, kind: 'unknown', label: id }
 }
 
 function normalizeAction(a) {
@@ -111,15 +120,8 @@ export function useStepsStore() {
     steps.value.splice(idx, 1)
   }
 
-  // Only a built-in example playbook has real seed content to restore to;
-  // every other playbook just gets cleared back to an empty step list.
-  function resetToSeed() {
-    const active = getActivePlaybookRecord()
-    if (isBuiltInSeedId(active.id)) {
-      steps.value.splice(0, steps.value.length, ...getSeedStepsFor(active.id))
-    } else {
-      steps.value.splice(0, steps.value.length)
-    }
+  function clearSteps() {
+    steps.value.splice(0, steps.value.length)
   }
 
   // Every node referenced by a classification's next_step, whether or not it
@@ -133,8 +135,7 @@ export function useStepsStore() {
     steps.value.forEach((s) => {
       s.classifications.forEach((c) => {
         if (c.nextStep && !targets.has(c.nextStep)) {
-          const known = externalTargets.find((t) => t.id === c.nextStep)
-          targets.set(c.nextStep, known || { id: c.nextStep, kind: 'unknown', label: c.nextStep })
+          targets.set(c.nextStep, externalTarget(c.nextStep))
         }
       })
     })
@@ -149,7 +150,7 @@ export function useStepsStore() {
     createStep,
     updateStep,
     deleteStep,
-    resetToSeed,
+    clearSteps,
     allReferencedTargets
   }
 }
