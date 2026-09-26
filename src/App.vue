@@ -106,7 +106,6 @@ async function saveLocally(pickFolder = false) {
   </main>
   <footer class="app-footer">
     <div class="container app-footer__inner">
-      <span>Playbook Editor — data is stored locally in this browser.</span>
     </div>
   </footer>
 </template>
