@@ -9,35 +9,40 @@ import { usePlaybookStore } from '../store/playbook.js'
 import { useStepsStore } from '../store/steps.js'
 import { SECTION_KEYS, SECTION_LABELS, DEFAULT_SECTION_COMMENTS, resolveSectionOrder } from '../utils/xmlExport.js'
 
-const playbook = usePlaybookStore()
+const playbookStore = usePlaybookStore()
 const stepsStore = useStepsStore()
 
-const order = computed(() => resolveSectionOrder(playbook.toExportPayload(), stepsStore.steps.value))
-const omitted = computed(() => SECTION_KEYS.filter((k) => !order.value.includes(k)))
+// The sections that will be exported, in order — and the ones that won't.
+const exportedSections = computed(() => resolveSectionOrder(playbookStore.toExportPayload(), stepsStore.steps.value))
+const omittedSections = computed(() => SECTION_KEYS.filter((sectionKey) => !exportedSections.value.includes(sectionKey)))
 
-function commit(next) {
-  playbook.sectionOrder.value = next
+// Saves a new section order to the playbook.
+function saveSectionOrder(newOrder) {
+  playbookStore.sectionOrder.value = newOrder
 }
-function move(key, delta) {
-  const next = [...order.value]
-  const i = next.indexOf(key)
-  const j = i + delta
-  if (i === -1 || j < 0 || j >= next.length) return
-  ;[next[i], next[j]] = [next[j], next[i]]
-  commit(next)
+// Swaps a section with its neighbour; direction is -1 (up) or +1 (down).
+function moveSection(sectionKey, direction) {
+  const newOrder = [...exportedSections.value]
+  const currentIndex = newOrder.indexOf(sectionKey)
+  const neighbourIndex = currentIndex + direction
+  if (currentIndex === -1 || neighbourIndex < 0 || neighbourIndex >= newOrder.length) return
+  // Swap two array items in one line ("destructuring assignment").
+  ;[newOrder[currentIndex], newOrder[neighbourIndex]] = [newOrder[neighbourIndex], newOrder[currentIndex]]
+  saveSectionOrder(newOrder)
 }
-function exclude(key) {
-  commit(order.value.filter((k) => k !== key))
+function excludeSection(sectionKey) {
+  saveSectionOrder(exportedSections.value.filter((otherKey) => otherKey !== sectionKey))
 }
-function include(key) {
-  commit([...order.value, key])
+function includeSection(sectionKey) {
+  saveSectionOrder([...exportedSections.value, sectionKey])
 }
-function commentValue(key) {
-  const stored = playbook.sectionComments.value[key]
-  return stored === undefined || stored === null ? DEFAULT_SECTION_COMMENTS[key] : stored
+// The comment written above a section: its own, or the default one.
+function sectionCommentText(sectionKey) {
+  const storedComment = playbookStore.sectionComments.value[sectionKey]
+  return storedComment === undefined || storedComment === null ? DEFAULT_SECTION_COMMENTS[sectionKey] : storedComment
 }
-function setComment(key, value) {
-  playbook.sectionComments.value[key] = value
+function setSectionComment(sectionKey, commentText) {
+  playbookStore.sectionComments.value[sectionKey] = commentText
 }
 </script>
 
@@ -48,27 +53,27 @@ function setComment(key, value) {
       Top-level sections in export order, with the XML comment written above each. A section that has content is
       always exported; removing it here only drops it while it's empty.
     </p>
-    <div v-for="(key, idx) in order" :key="key" class="layout-row">
-      <span class="mono item-index">{{ idx + 1 }}</span>
-      <span class="layout-name mono">{{ key }}</span>
+    <div v-for="(sectionKey, sectionIndex) in exportedSections" :key="sectionKey" class="layout-row">
+      <span class="mono item-index">{{ sectionIndex + 1 }}</span>
+      <span class="layout-name mono">{{ sectionKey }}</span>
       <input
         type="text"
-        :value="commentValue(key)"
-        :placeholder="`Comment above <${key}> (blank = none)`"
-        @input="setComment(key, $event.target.value)"
+        :value="sectionCommentText(sectionKey)"
+        :placeholder="`Comment above <${sectionKey}> (blank = none)`"
+        @input="setSectionComment(sectionKey, $event.target.value)"
       />
       <span class="layout-actions">
-        <button type="button" class="btn btn-ghost" :disabled="idx === 0" title="Move up" @click="move(key, -1)">↑</button>
-        <button type="button" class="btn btn-ghost" :disabled="idx === order.length - 1" title="Move down" @click="move(key, 1)">↓</button>
-        <button type="button" class="btn btn-ghost" :title="`Don't export an empty ${SECTION_LABELS[key]} section`" @click="exclude(key)">✕</button>
+        <button type="button" class="btn btn-ghost" :disabled="sectionIndex === 0" title="Move up" @click="moveSection(sectionKey, -1)">↑</button>
+        <button type="button" class="btn btn-ghost" :disabled="sectionIndex === exportedSections.length - 1" title="Move down" @click="moveSection(sectionKey, 1)">↓</button>
+        <button type="button" class="btn btn-ghost" :title="`Don't export an empty ${SECTION_LABELS[sectionKey]} section`" @click="excludeSection(sectionKey)">✕</button>
       </span>
     </div>
-    <div v-if="omitted.length" class="layout-omitted">
+    <div v-if="omittedSections.length" class="layout-omitted">
       <span class="hint">Not exported:</span>
-      <button v-for="key in omitted" :key="key" type="button" class="btn btn-ghost mono" @click="include(key)">+ {{ key }}</button>
+      <button v-for="omittedKey in omittedSections" :key="omittedKey" type="button" class="btn btn-ghost mono" @click="includeSection(omittedKey)">+ {{ omittedKey }}</button>
     </div>
     <label class="checkbox">
-      <input v-model="playbook.includeXmlDeclaration.value" type="checkbox" />
+      <input v-model="playbookStore.includeXmlDeclaration.value" type="checkbox" />
       Start the file with <code>&lt;?xml version="1.0" encoding="UTF-8"?&gt;</code>
     </label>
   </section>

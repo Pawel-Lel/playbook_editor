@@ -9,69 +9,70 @@
 import { usePlaybookStore } from '../store/playbook.js'
 import ItemToolbar from './ItemToolbar.vue'
 
-const playbook = usePlaybookStore()
+const playbookStore = usePlaybookStore()
 </script>
 
 <template>
   <section class="panel form-section">
     <div class="section-header">
-      <h3>Escalation handling <span class="count mono">{{ playbook.escalations.value.length }}</span></h3>
-      <button type="button" class="btn btn-secondary" @click="playbook.addItem('escalations')">+ Add escalation</button>
+      <h3>Escalation handling <span class="count mono">{{ playbookStore.escalations.value.length }}</span></h3>
+      <button type="button" class="btn btn-secondary" @click="playbookStore.addItem('escalations')">+ Add escalation</button>
     </div>
-    <p v-if="!playbook.escalations.value.length" class="hint">No escalations yet.</p>
-    <div v-for="(e, idx) in playbook.escalations.value" :key="e.id" class="item-row">
+    <p v-if="!playbookStore.escalations.value.length" class="hint">No escalations yet.</p>
+    <div v-for="(escalation, escalationIndex) in playbookStore.escalations.value" :key="escalation.id" class="item-row">
       <ItemToolbar
-        :index="idx"
-        :total="playbook.escalations.value.length"
-        :label="e.condition"
-        @up="playbook.moveItem('escalations', e.id, -1)"
-        @down="playbook.moveItem('escalations', e.id, 1)"
-        @remove="playbook.removeItem('escalations', e.id)"
+        :index="escalationIndex"
+        :total="playbookStore.escalations.value.length"
+        :label="escalation.condition"
+        @up="playbookStore.moveItem('escalations', escalation.id, -1)"
+        @down="playbookStore.moveItem('escalations', escalation.id, 1)"
+        @remove="playbookStore.removeItem('escalations', escalation.id)"
       />
       <div class="field">
         <label>Comment <span class="optional">(optional — exported as &lt;!-- ... --&gt; above this ESCALATION, e.g. "Gas Emergency")</span></label>
-        <input v-model="e.comment" type="text" />
+        <input v-model="escalation.comment" type="text" />
       </div>
       <div class="grid-3">
         <div class="field">
           <label>Attribute</label>
-          <select v-model="e.attrName">
+          <select v-model="escalation.attrName">
             <option value="condition">condition</option>
             <option value="type">type</option>
           </select>
         </div>
         <div class="field">
           <label>Value</label>
-          <input v-model="e.condition" type="text" placeholder="e.g. GAS_LEAK" />
+          <input v-model="escalation.condition" type="text" placeholder="e.g. GAS_LEAK" />
         </div>
         <div class="field">
           <label>Escalation reason</label>
-          <input v-model="e.escalationReason" type="text" placeholder="e.g. gas_emergency" />
+          <input v-model="escalation.escalationReason" type="text" placeholder="e.g. gas_emergency" />
         </div>
       </div>
       <div class="field">
         <label>Description <span class="optional">(optional)</span></label>
-        <textarea v-model="e.description" rows="2" placeholder="What indicates this escalation"></textarea>
+        <textarea v-model="escalation.description" rows="2" placeholder="What indicates this escalation"></textarea>
       </div>
       <div class="field">
         <label>Trigger phrases</label>
-        <textarea v-model="e.trigger" rows="2" placeholder="e.g. leaking gas, gas leak"></textarea>
+        <textarea v-model="escalation.trigger" rows="2" placeholder="e.g. leaking gas, gas leak"></textarea>
       </div>
       <div class="grid-2">
         <div class="field">
           <label>Flow to invoke</label>
-          <input v-model="e.flowName" type="text" placeholder="e.g. Emergency_Escalation_Gas" />
+          <input v-model="escalation.flowName" type="text" placeholder="e.g. Emergency_Escalation_Gas" />
         </div>
         <div class="field">
           <label>param_playbook_name <span class="optional">(blank = this playbook's name)</span></label>
-          <input v-model="e.playbookNameParam" type="text" :placeholder="playbook.playbookName.value" />
+          <input v-model="escalation.playbookNameParam" type="text" :placeholder="playbookStore.playbookName.value" />
         </div>
       </div>
       <div class="field">
         <label>Note <span class="optional">(optional, exported as &lt;!-- Note: ... --&gt; inside ACTION)</span></label>
-        <textarea v-model="e.note" rows="2" placeholder="Context for why this escalates"></textarea>
+        <textarea v-model="escalation.note" rows="2" placeholder="Context for why this escalates"></textarea>
       </div>
     </div>
+    <!-- <slot />: whatever the parent puts between <EscalationsEditor> tags appears here. -->
     <slot />
   </section>
 </template>

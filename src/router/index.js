@@ -9,6 +9,8 @@ import PlaybooksView from '../views/PlaybooksView.vue'
 import LoginView from '../views/LoginView.vue'
 import { useCloudSyncStore } from '../store/cloudSync.js'
 
+// Which component (page) is shown for which URL. `props: true` passes the
+// :id part of the URL to the component as a prop named `id`.
 const routes = [
   { path: '/', redirect: '/steps' },
   { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
@@ -33,12 +35,17 @@ const router = createRouter({
 
 // Every page but the login page needs a signed-in Google account; anyone
 // else is sent to /login and brought back to where they were headed after.
-router.beforeEach((to) => {
+// beforeEach runs before every page change. Returning true allows it;
+// returning a route (or path) sends the person there instead.
+router.beforeEach((targetRoute) => {
   const { signedIn } = useCloudSyncStore()
-  if (to.meta.public) {
-    return signedIn.value && to.name === 'login' ? (to.query.redirect || '/') : true
+  if (targetRoute.meta.public) {
+    // Already signed in? Skip the login page and go where they were headed.
+    return signedIn.value && targetRoute.name === 'login' ? (targetRoute.query.redirect || '/') : true
   }
-  if (!signedIn.value) return { name: 'login', query: to.fullPath === '/' ? {} : { redirect: to.fullPath } }
+  if (!signedIn.value) {
+    return { name: 'login', query: targetRoute.fullPath === '/' ? {} : { redirect: targetRoute.fullPath } }
+  }
   return true
 })
 

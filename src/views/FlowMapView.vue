@@ -1,4 +1,15 @@
 <script setup>
+// FlowMapView — draws the active playbook as a node/edge diagram (SVG).
+//
+// Vue concepts used in this file:
+//  - <script setup>: everything declared at the top level here (variables,
+//    functions, imports) is automatically usable in the <template> below.
+//  - ref(value): a reactive "box" holding one value. Read/write it in
+//    script code via `.value`; in the template Vue unwraps it for you, so
+//    you write just `zoomLevel`, not `zoomLevel.value`.
+//  - computed(() => ...): a value derived from other reactive data. Vue
+//    re-runs the function automatically whenever that data changes, and
+//    caches the result in between. Also read via `.value` in script code.
 import { computed, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useStepsStore } from '../store/steps.js'
@@ -7,95 +18,117 @@ import { usePlaybooksStore } from '../store/playbooks.js'
 import { buildLlmInstructionsXml, exportFileName } from '../utils/xmlExport.js'
 import ExportXmlModal from '../components/ExportXmlModal.vue'
 
+// useRouter() gives access to the app's router, used to change pages in code.
 const router = useRouter()
-const store = useStepsStore()
-const playbook = usePlaybookStore()
-const playbooksStore = usePlaybooksStore()
-const showExport = ref(false)
+// The three stores (shared app state) this page reads from:
+const stepsStore = useStepsStore() // dialog steps of the active playbook
+const playbookStore = usePlaybookStore() // settings of the active playbook
+const playbooksStore = usePlaybooksStore() // the list of all playbooks
+
+// ---- Export XML modal ---------------------------------------------------
+
+const isExportModalOpen = ref(false)
+// The full XML document for the active playbook. Because it's computed, it
+// is rebuilt automatically whenever the playbook or its steps change.
 const exportedXml = computed(() =>
-  buildLlmInstructionsXml(
-    playbook.toExportPayload(),
-    store.steps.value
-  )
+  buildLlmInstructionsXml(playbookStore.toExportPayload(), stepsStore.steps.value)
 )
 
-const NODE_W = 216
-const NODE_H = 78
-const COL_GAP = 130
-const ROW_GAP = 34
+// ---- Diagram sizing (in SVG units / pixels) -----------------------------
 
-const selectedId = ref(null)
-const zoom = ref(1)
+const NODE_WIDTH = 216
+const NODE_HEIGHT = 78
+const COLUMN_GAP = 130 // horizontal space between columns of nodes
+const ROW_GAP = 34 // vertical space between nodes in one column
+
+// Id of the node the person clicked on (null = nothing selected).
+const selectedNodeId = ref(null)
+// 1 = 100%. Changed with the +/− buttons, see setZoomLevel().
+const zoomLevel = ref(1)
 
 // A router/triage-style playbook has routing categories instead of dialog
 // steps — it gets a different graph (this playbook → category → target
 // playbook) rather than the step-classification flow below.
-const isRoutingPlaybook = computed(() => store.steps.value.length === 0 && playbook.routingCategories.value.length > 0)
+const isRoutingPlaybook = computed(
+  () => stepsStore.steps.value.length === 0 && playbookStore.routingCategories.value.length > 0
+)
 
 // ---- Build the step-flow graph ---------------------------------------
+// Nodes are every step plus every target a classification points at;
+// edges are the classifications' "next step" links.
 
 const stepNodesById = computed(() => {
-  const map = new Map()
-  store.allReferencedTargets.value.forEach((t) => map.set(t.id, t))
-  return map
+  const nodeMap = new Map()
+  stepsStore.allReferencedTargets.value.forEach((target) => nodeMap.set(target.id, target))
+  return nodeMap
 })
 
 const stepEdges = computed(() => {
-  const list = []
-  store.steps.value.forEach((s) => {
-    s.classifications.forEach((c) => {
-      if (!c.nextStep) return
-      list.push({
-        id: c.id,
-        from: s.id,
-        to: c.nextStep,
-        label: c.classificationId || c.triggerCondition || '',
+  const edgeList = []
+  stepsStore.steps.value.forEach((step) => {
+    step.classifications.forEach((classification) => {
+      if (!classification.nextStep) return
+      edgeList.push({
+        id: classification.id,
+        from: step.id,
+        to: classification.nextStep,
+        label: classification.classificationId || classification.triggerCondition || '',
+        // Drawn dashed: the link hands off to a flow, or is the "don't know" path.
         isEscalation:
-          (c.actions || []).some((a) => a.toolType === 'Flow_Invocation') ||
-          /do.?not.?know/i.test(c.triggerCondition || '')
+          (classification.actions || []).some((action) => action.toolType === 'Flow_Invocation') ||
+          /do.?not.?know/i.test(classification.triggerCondition || '')
       })
     })
   })
-  return list
+  return edgeList
 })
 
 // ---- Build the routing graph -------------------------------------------
+// Nodes: this playbook (the root) → each routing category → the playbook
+// that category routes to.
 
-function extractPlaybookTarget(action) {
-  const m = String(action || '').match(/\$\{PLAYBOOK:([^}]+)\}/)
-  return m ? m[1].trim() : ''
+// Pulls "Water Taps" out of an action like "${PLAYBOOK:Water Taps}".
+function extractPlaybookTarget(actionText) {
+  const match = String(actionText || '').match(/\$\{PLAYBOOK:([^}]+)\}/)
+  return match ? match[1].trim() : ''
 }
 
-function findTargetPlaybook(name) {
-  const needle = name.trim().toLowerCase()
-  return playbooksStore.playbooks.value.find((p) => (p.playbookName || '').trim().toLowerCase() === needle) || null
+// Finds a loaded playbook by name (case-insensitive), or null.
+function findTargetPlaybook(playbookName) {
+  const wantedName = playbookName.trim().toLowerCase()
+  return (
+    playbooksStore.playbooks.value.find(
+      (candidate) => (candidate.playbookName || '').trim().toLowerCase() === wantedName
+    ) || null
+  )
 }
 
-const ROOT_ID = '__playbook_root__'
+const ROOT_NODE_ID = '__playbook_root__'
 
 const routingNodesById = computed(() => {
-  const map = new Map()
-  map.set(ROOT_ID, {
-    id: ROOT_ID,
-    displayId: playbook.playbookName.value || 'This playbook',
+  const nodeMap = new Map()
+  nodeMap.set(ROOT_NODE_ID, {
+    id: ROOT_NODE_ID,
+    displayId: playbookStore.playbookName.value || 'This playbook',
     kind: 'root',
     label: 'Triage entry point'
   })
-  playbook.routingCategories.value.forEach((c) => {
-    const catId = `cat:${c.id}`
-    const targetName = extractPlaybookTarget(c.action)
-    map.set(catId, {
-      id: catId,
-      displayId: c.name || '(unnamed category)',
+  playbookStore.routingCategories.value.forEach((category) => {
+    const categoryNodeId = `cat:${category.id}`
+    const targetName = extractPlaybookTarget(category.action)
+    nodeMap.set(categoryNodeId, {
+      id: categoryNodeId,
+      displayId: category.name || '(unnamed category)',
       kind: 'category',
-      label: targetName ? `→ ${targetName}` : c.action || '(no routing action set)'
+      label: targetName ? `→ ${targetName}` : category.action || '(no routing action set)'
     })
     if (!targetName) return
     const targetPlaybook = findTargetPlaybook(targetName)
-    const targetId = targetPlaybook ? `playbook:${targetPlaybook.id}` : `unknown-playbook:${targetName}`
-    if (!map.has(targetId)) {
-      map.set(targetId, {
-        id: targetId,
+    const targetNodeId = targetPlaybook ? `playbook:${targetPlaybook.id}` : `unknown-playbook:${targetName}`
+    // Several categories can route to the same playbook — add its node once.
+    if (!nodeMap.has(targetNodeId)) {
+      nodeMap.set(targetNodeId, {
+        id: targetNodeId,
         displayId: targetPlaybook ? targetPlaybook.playbookName : targetName,
         kind: targetPlaybook ? 'playbook' : 'unknown-playbook',
         label: targetPlaybook ? 'In this workspace — double-click to switch' : 'Not found in this workspace',
@@ -103,26 +136,35 @@ const routingNodesById = computed(() => {
       })
     }
   })
-  return map
+  return nodeMap
 })
 
 const routingEdges = computed(() => {
-  const list = []
-  playbook.routingCategories.value.forEach((c) => {
-    const catId = `cat:${c.id}`
-    list.push({ id: `e-root-${c.id}`, from: ROOT_ID, to: catId, label: '', isEscalation: false })
-    const targetName = extractPlaybookTarget(c.action)
+  const edgeList = []
+  playbookStore.routingCategories.value.forEach((category) => {
+    const categoryNodeId = `cat:${category.id}`
+    edgeList.push({ id: `e-root-${category.id}`, from: ROOT_NODE_ID, to: categoryNodeId, label: '', isEscalation: false })
+    const targetName = extractPlaybookTarget(category.action)
     if (!targetName) return
     const targetPlaybook = findTargetPlaybook(targetName)
-    const targetId = targetPlaybook ? `playbook:${targetPlaybook.id}` : `unknown-playbook:${targetName}`
-    list.push({ id: `e-cat-${c.id}`, from: catId, to: targetId, label: 'routes to', isEscalation: !targetPlaybook })
+    const targetNodeId = targetPlaybook ? `playbook:${targetPlaybook.id}` : `unknown-playbook:${targetName}`
+    edgeList.push({
+      id: `e-cat-${category.id}`,
+      from: categoryNodeId,
+      to: targetNodeId,
+      label: 'routes to',
+      isEscalation: !targetPlaybook // dashed when the target playbook isn't loaded
+    })
   })
-  return list
+  return edgeList
 })
 
-function categoryTriggersFor(id) {
-  const c = playbook.routingCategories.value.find((cat) => `cat:${cat.id}` === id)
-  return c?.triggers || ''
+// The trigger phrases of the category behind a "cat:..." node id.
+function categoryTriggersFor(categoryNodeId) {
+  const category = playbookStore.routingCategories.value.find(
+    (candidate) => `cat:${candidate.id}` === categoryNodeId
+  )
+  return category?.triggers || ''
 }
 
 // A plain, unambiguous "category → target playbook" list shown alongside
@@ -130,13 +172,13 @@ function categoryTriggersFor(id) {
 // looked at (or interacted with) the diagram itself.
 const routingSummary = computed(() => {
   if (!isRoutingPlaybook.value) return []
-  return playbook.routingCategories.value.map((c) => {
-    const targetName = extractPlaybookTarget(c.action)
+  return playbookStore.routingCategories.value.map((category) => {
+    const targetName = extractPlaybookTarget(category.action)
     const targetPlaybook = targetName ? findTargetPlaybook(targetName) : null
     return {
-      id: c.id,
-      catId: `cat:${c.id}`,
-      name: c.name || '(unnamed category)',
+      id: category.id,
+      categoryNodeId: `cat:${category.id}`,
+      name: category.name || '(unnamed category)',
       targetName: targetName || '(no routing action set)',
       resolved: !!targetPlaybook,
       targetPlaybookId: targetPlaybook ? targetPlaybook.id : null
@@ -144,9 +186,9 @@ const routingSummary = computed(() => {
   })
 })
 
-function switchToPlaybookId(id) {
-  playbooksStore.setActivePlaybookId(id)
-  selectedId.value = null
+function switchToPlaybookId(playbookId) {
+  playbooksStore.setActivePlaybookId(playbookId)
+  selectedNodeId.value = null
 }
 
 // ---- Graph the template actually renders (switches on playbook shape) --
@@ -156,10 +198,10 @@ const edges = computed(() => (isRoutingPlaybook.value ? routingEdges.value : ste
 
 const pageSubtitle = computed(() => {
   if (isRoutingPlaybook.value) {
-    const n = playbook.routingCategories.value.length
-    return `${n} routing categor${n === 1 ? 'y' : 'ies'}. Double-click a resolved target playbook to switch to it.`
+    const categoryCount = playbookStore.routingCategories.value.length
+    return `${categoryCount} routing categor${categoryCount === 1 ? 'y' : 'ies'}. Double-click a resolved target playbook to switch to it.`
   }
-  return `${nodes.value.length} nodes · ${edges.value.length} classification links. Columns are ordered by ` +
+  return `${positionedNodes.value.length} nodes · ${edges.value.length} classification links. Columns are ordered by ` +
     'distance from the entry steps; click a node to trace its connections.'
 })
 
@@ -169,159 +211,177 @@ const svgAriaLabel = computed(() =>
     : 'Diagram of relationships between dialog steps'
 )
 
-// Layered (longest-path) layout via topological levelling, robust to cycles.
+// ---- Layout: where each node goes -------------------------------------
+// Layered (longest-path) layout via topological levelling, robust to cycles:
+// a node's column ("level") is one more than the deepest node linking to it,
+// so entry steps sit in column 0 and everything flows left to right.
 const layout = computed(() => {
-  const ids = Array.from(nodesById.value.keys())
-  const outgoing = new Map(ids.map((id) => [id, []]))
-  const incoming = new Map(ids.map((id) => [id, []]))
-  edges.value.forEach((e) => {
-    if (outgoing.has(e.from)) outgoing.get(e.from).push(e.to)
-    if (incoming.has(e.to)) incoming.get(e.to).push(e.from)
+  const nodeIds = Array.from(nodesById.value.keys())
+  const incomingByNodeId = new Map(nodeIds.map((nodeId) => [nodeId, []]))
+  edges.value.forEach((edge) => {
+    if (incomingByNodeId.has(edge.to)) incomingByNodeId.get(edge.to).push(edge.from)
   })
 
-  const level = new Map()
-  const visiting = new Set()
+  const levelByNodeId = new Map()
+  const nodesBeingVisited = new Set() // detects loops (A → B → A)
 
-  function levelOf(id) {
-    if (level.has(id)) return level.get(id)
-    if (visiting.has(id)) return 0 // cycle guard
-    visiting.add(id)
-    const preds = incoming.get(id) || []
-    let lvl = 0
-    preds.forEach((p) => {
-      lvl = Math.max(lvl, levelOf(p) + 1)
+  function levelOf(nodeId) {
+    if (levelByNodeId.has(nodeId)) return levelByNodeId.get(nodeId)
+    if (nodesBeingVisited.has(nodeId)) return 0 // cycle guard
+    nodesBeingVisited.add(nodeId)
+    const predecessorIds = incomingByNodeId.get(nodeId) || []
+    let nodeLevel = 0
+    predecessorIds.forEach((predecessorId) => {
+      nodeLevel = Math.max(nodeLevel, levelOf(predecessorId) + 1)
     })
-    visiting.delete(id)
-    level.set(id, lvl)
-    return lvl
+    nodesBeingVisited.delete(nodeId)
+    levelByNodeId.set(nodeId, nodeLevel)
+    return nodeLevel
   }
 
-  ids.forEach((id) => levelOf(id))
+  nodeIds.forEach((nodeId) => levelOf(nodeId))
 
-  const columns = new Map()
-  ids.forEach((id) => {
-    const lvl = level.get(id)
-    if (!columns.has(lvl)) columns.set(lvl, [])
-    columns.get(lvl).push(id)
+  // Group node ids into columns by level.
+  const nodeIdsByColumn = new Map()
+  nodeIds.forEach((nodeId) => {
+    const nodeLevel = levelByNodeId.get(nodeId)
+    if (!nodeIdsByColumn.has(nodeLevel)) nodeIdsByColumn.set(nodeLevel, [])
+    nodeIdsByColumn.get(nodeLevel).push(nodeId)
   })
 
-  const positions = new Map()
-  const maxLevel = Math.max(0, ...Array.from(columns.keys()))
-  let maxRows = 0
+  // Turn column/row numbers into x/y coordinates.
+  const positionByNodeId = new Map()
+  const deepestLevel = Math.max(0, ...Array.from(nodeIdsByColumn.keys()))
+  let tallestColumnSize = 0
 
-  for (let lvl = 0; lvl <= maxLevel; lvl++) {
-    const col = (columns.get(lvl) || []).sort((a, b) => a.localeCompare(b))
-    maxRows = Math.max(maxRows, col.length)
-    col.forEach((id, row) => {
-      positions.set(id, {
-        x: lvl * (NODE_W + COL_GAP) + 24,
-        y: row * (NODE_H + ROW_GAP) + 24
+  for (let columnLevel = 0; columnLevel <= deepestLevel; columnLevel++) {
+    const columnNodeIds = (nodeIdsByColumn.get(columnLevel) || []).sort((first, second) => first.localeCompare(second))
+    tallestColumnSize = Math.max(tallestColumnSize, columnNodeIds.length)
+    columnNodeIds.forEach((nodeId, rowIndex) => {
+      positionByNodeId.set(nodeId, {
+        x: columnLevel * (NODE_WIDTH + COLUMN_GAP) + 24,
+        y: rowIndex * (NODE_HEIGHT + ROW_GAP) + 24
       })
     })
   }
 
-  const width = (maxLevel + 1) * (NODE_W + COL_GAP) + 48
-  const height = maxRows * (NODE_H + ROW_GAP) + 48
+  const width = (deepestLevel + 1) * (NODE_WIDTH + COLUMN_GAP) + 48
+  const height = tallestColumnSize * (NODE_HEIGHT + ROW_GAP) + 48
 
-  return { positions, width: Math.max(width, 800), height: Math.max(height, 500) }
+  return { positions: positionByNodeId, width: Math.max(width, 800), height: Math.max(height, 500) }
 })
 
-const nodes = computed(() =>
-  Array.from(nodesById.value.values()).map((n) => {
-    const pos = layout.value.positions.get(n.id) || { x: 0, y: 0 }
-    return { ...n, ...pos }
+// Every node with its x/y position merged in — what the template draws.
+const positionedNodes = computed(() =>
+  Array.from(nodesById.value.values()).map((node) => {
+    const position = layout.value.positions.get(node.id) || { x: 0, y: 0 }
+    return { ...node, ...position }
   })
 )
 
-function nodeById(id) {
-  return nodes.value.find((n) => n.id === id)
+function positionedNodeById(nodeId) {
+  return positionedNodes.value.find((node) => node.id === nodeId)
 }
 
-function nodeDisplayId(n) {
-  const text = n.displayId || n.id
+// The node's title, shortened so it fits inside the box.
+function nodeDisplayId(node) {
+  const text = node.displayId || node.id
   return text.length > 26 ? text.slice(0, 25) + '…' : text
 }
 
-function nodeTooltip(id) {
+// Hover text: a category's triggers, or a step's comment.
+function nodeTooltip(nodeId) {
   if (isRoutingPlaybook.value) {
-    return categoryTriggersFor(id)
+    return categoryTriggersFor(nodeId)
   }
-  return store.getStep(id)?.comment || ''
+  return stepsStore.getStep(nodeId)?.comment || ''
 }
 
-function edgePath(e) {
-  const from = nodeById(e.from)
-  const to = nodeById(e.to)
-  if (!from || !to) return ''
-  const sx = from.x + NODE_W
-  const sy = from.y + NODE_H / 2
-  const tx = to.x
-  const ty = to.y + NODE_H / 2
-  const dx = Math.max(60, (tx - sx) / 2)
-  return `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`
+// SVG path data for a smooth curve from the right edge of the source node
+// to the left edge of the target node (a cubic Bézier: "M start C ...").
+function edgePath(edge) {
+  const fromNode = positionedNodeById(edge.from)
+  const toNode = positionedNodeById(edge.to)
+  if (!fromNode || !toNode) return ''
+  const startX = fromNode.x + NODE_WIDTH
+  const startY = fromNode.y + NODE_HEIGHT / 2
+  const endX = toNode.x
+  const endY = toNode.y + NODE_HEIGHT / 2
+  const curveStrength = Math.max(60, (endX - startX) / 2)
+  return `M ${startX} ${startY} C ${startX + curveStrength} ${startY}, ${endX - curveStrength} ${endY}, ${endX} ${endY}`
 }
 
-function edgeMidpoint(e) {
-  const from = nodeById(e.from)
-  const to = nodeById(e.to)
-  if (!from || !to) return { x: 0, y: 0 }
+// Where to put an edge's label: halfway between its two nodes.
+function edgeMidpoint(edge) {
+  const fromNode = positionedNodeById(edge.from)
+  const toNode = positionedNodeById(edge.to)
+  if (!fromNode || !toNode) return { x: 0, y: 0 }
   return {
-    x: (from.x + NODE_W + to.x) / 2,
-    y: (from.y + to.y) / 2 + NODE_H / 2
+    x: (fromNode.x + NODE_WIDTH + toNode.x) / 2,
+    y: (fromNode.y + toNode.y) / 2 + NODE_HEIGHT / 2
   }
 }
 
-const relatedEdgeIds = computed(() => {
-  if (!selectedId.value) return new Set()
+// ---- Selection: highlight the clicked node and its direct links --------
+
+const edgeIdsTouchingSelection = computed(() => {
+  if (!selectedNodeId.value) return new Set()
   return new Set(
     edges.value
-      .filter((e) => e.from === selectedId.value || e.to === selectedId.value)
-      .map((e) => e.id)
+      .filter((edge) => edge.from === selectedNodeId.value || edge.to === selectedNodeId.value)
+      .map((edge) => edge.id)
   )
 })
 
-function isEdgeDimmed(e) {
-  return selectedId.value && !relatedEdgeIds.value.has(e.id)
+function isEdgeDimmed(edge) {
+  return selectedNodeId.value && !edgeIdsTouchingSelection.value.has(edge.id)
 }
-function isNodeDimmed(n) {
-  if (!selectedId.value) return false
-  if (n.id === selectedId.value) return false
+function isNodeDimmed(node) {
+  if (!selectedNodeId.value) return false
+  if (node.id === selectedNodeId.value) return false
   return !edges.value.some(
-    (e) =>
-      (e.from === selectedId.value && e.to === n.id) ||
-      (e.to === selectedId.value && e.from === n.id)
+    (edge) =>
+      (edge.from === selectedNodeId.value && edge.to === node.id) ||
+      (edge.to === selectedNodeId.value && edge.from === node.id)
   )
 }
 
-function selectNode(id) {
-  selectedId.value = selectedId.value === id ? null : id
+// Clicking the selected node again deselects it.
+function selectNode(nodeId) {
+  selectedNodeId.value = selectedNodeId.value === nodeId ? null : nodeId
 }
 
-function goToStep(id) {
-  if (nodesById.value.get(id)?.kind === 'step') {
-    router.push(`/steps/${encodeURIComponent(id)}`)
+// Incoming/outgoing edges of the selected node, for the detail drawer.
+const selectedIncomingEdges = computed(() => edges.value.filter((edge) => edge.to === selectedNodeId.value))
+const selectedOutgoingEdges = computed(() => edges.value.filter((edge) => edge.from === selectedNodeId.value))
+
+function goToStep(stepId) {
+  if (nodesById.value.get(stepId)?.kind === 'step') {
+    router.push(`/steps/${encodeURIComponent(stepId)}`)
   }
 }
 
-function switchToTargetPlaybook(id) {
-  const node = nodesById.value.get(id)
+function switchToTargetPlaybook(nodeId) {
+  const node = nodesById.value.get(nodeId)
   if (node?.kind === 'playbook' && node.targetPlaybookId) {
     playbooksStore.setActivePlaybookId(node.targetPlaybookId)
-    selectedId.value = null
+    selectedNodeId.value = null
   }
 }
 
-function handleNodeActivate(id) {
-  const node = nodesById.value.get(id)
+// Double-click: open a step for editing, or switch to a target playbook.
+function handleNodeActivate(nodeId) {
+  const node = nodesById.value.get(nodeId)
   if (!node) return
   if (node.kind === 'step') {
-    goToStep(id)
+    goToStep(nodeId)
   } else if (node.kind === 'playbook') {
-    switchToTargetPlaybook(id)
+    switchToTargetPlaybook(nodeId)
   }
 }
 
-function badgeClass(kind) {
+// CSS class for the colored badge of each node kind (see main.css).
+function badgeClass(nodeKind) {
   return {
     step: 'badge-step',
     terminal: 'badge-terminal',
@@ -332,19 +392,30 @@ function badgeClass(kind) {
     category: 'badge-category',
     playbook: 'badge-playbook',
     'unknown-playbook': 'badge-unknown'
-  }[kind] || 'badge-unknown'
+  }[nodeKind] || 'badge-unknown'
 }
 
-function setZoom(val) {
-  zoom.value = Math.min(1.4, Math.max(0.4, val))
+// Keeps the zoom between 40% and 140%.
+function setZoomLevel(newZoomLevel) {
+  zoomLevel.value = Math.min(1.4, Math.max(0.4, newZoomLevel))
 }
 </script>
 
+<!--
+  Template syntax used below:
+   - {{ expression }}   prints a value as text.
+   - :attr="expr"       (short for v-bind) sets an attribute from JavaScript.
+   - @event="handler"   (short for v-on) runs code on an event, e.g. @click.
+   - v-if / v-else      renders an element only when a condition is true.
+   - v-for="item in list" :key="item.id"
+                        repeats an element once per list item; `key` must be
+                        unique so Vue can track which element is which.
+-->
 <template>
   <div class="container container--wide">
     <div class="page-head">
       <div>
-        <p class="eyebrow mono">{{ playbook.playbookName.value || '(untitled playbook)' }}</p>
+        <p class="eyebrow mono">{{ playbookStore.playbookName.value || '(untitled playbook)' }}</p>
         <h1>Flow map</h1>
         <p class="page-sub">{{ pageSubtitle }}</p>
       </div>
@@ -352,9 +423,10 @@ function setZoom(val) {
     </div>
 
     <div class="toolbar-row">
-      <button class="btn btn-secondary" @click="showExport = true">Export XML</button>
+      <button class="btn btn-secondary" @click="isExportModalOpen = true">Export XML</button>
     </div>
 
+    <!-- Legend: explains node colors; different for the two playbook shapes. -->
     <div class="legend panel">
       <template v-if="isRoutingPlaybook">
         <span class="legend__item"><i class="dot dot-root"></i> This playbook</span>
@@ -371,35 +443,38 @@ function setZoom(val) {
         <span class="legend__item legend__item--edge"><i class="line line-escalation"></i> Escalation / unknown-fuel path</span>
       </template>
       <div class="legend__zoom">
-        <button class="btn btn-ghost" @click="setZoom(zoom - 0.15)" aria-label="Zoom out">−</button>
-        <span class="mono zoom-value">{{ Math.round(zoom * 100) }}%</span>
-        <button class="btn btn-ghost" @click="setZoom(zoom + 0.15)" aria-label="Zoom in">+</button>
+        <button class="btn btn-ghost" @click="setZoomLevel(zoomLevel - 0.15)" aria-label="Zoom out">−</button>
+        <span class="mono zoom-value">{{ Math.round(zoomLevel * 100) }}%</span>
+        <button class="btn btn-ghost" @click="setZoomLevel(zoomLevel + 0.15)" aria-label="Zoom in">+</button>
       </div>
     </div>
 
+    <!-- Text summary of the routing graph (router/triage playbooks only). -->
     <div v-if="isRoutingPlaybook" class="routing-summary panel">
       <h3>Category → target playbook</h3>
       <ul class="routing-summary__list">
         <li
-          v-for="r in routingSummary"
-          :key="r.id"
+          v-for="summaryRow in routingSummary"
+          :key="summaryRow.id"
           class="routing-summary__row"
-          :class="{ 'is-selected': selectedId === r.catId }"
-          @click="selectNode(r.catId)"
+          :class="{ 'is-selected': selectedNodeId === summaryRow.categoryNodeId }"
+          @click="selectNode(summaryRow.categoryNodeId)"
         >
-          <span class="routing-summary__category">{{ r.name }}</span>
+          <span class="routing-summary__category">{{ summaryRow.name }}</span>
           <span class="routing-summary__arrow" aria-hidden="true">→</span>
-          <span class="routing-summary__target" :class="{ 'is-unresolved': !r.resolved }">
-            {{ r.targetName }}
+          <span class="routing-summary__target" :class="{ 'is-unresolved': !summaryRow.resolved }">
+            {{ summaryRow.targetName }}
           </span>
-          <span class="badge" :class="r.resolved ? 'badge-playbook' : 'badge-unknown'">
-            {{ r.resolved ? 'in workspace' : 'not found' }}
+          <span class="badge" :class="summaryRow.resolved ? 'badge-playbook' : 'badge-unknown'">
+            {{ summaryRow.resolved ? 'in workspace' : 'not found' }}
           </span>
+          <!-- @click.stop: handle the click here and stop it from also
+               reaching the row's own @click (which would select the row). -->
           <button
-            v-if="r.resolved"
+            v-if="summaryRow.resolved"
             type="button"
             class="btn btn-ghost routing-summary__switch"
-            @click.stop="switchToPlaybookId(r.targetPlaybookId)"
+            @click.stop="switchToPlaybookId(summaryRow.targetPlaybookId)"
           >
             Switch →
           </button>
@@ -407,14 +482,17 @@ function setZoom(val) {
       </ul>
     </div>
 
+    <!-- The diagram itself. viewBox is the drawing's own coordinate space;
+         width/height scale it on screen by the zoom level. -->
     <div class="map-scroll panel">
       <svg
         :viewBox="`0 0 ${layout.width} ${layout.height}`"
-        :width="layout.width * zoom"
-        :height="layout.height * zoom"
+        :width="layout.width * zoomLevel"
+        :height="layout.height * zoomLevel"
         role="img"
         :aria-label="svgAriaLabel"
       >
+        <!-- Arrow heads, referenced by the edges' marker-end below. -->
         <defs>
           <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" style="fill: var(--slate-500)" />
@@ -424,110 +502,113 @@ function setZoom(val) {
           </marker>
         </defs>
 
+        <!-- Edges first, so the nodes are drawn on top of them. -->
         <g class="edges">
           <g
-            v-for="e in edges"
-            :key="e.id"
+            v-for="edge in edges"
+            :key="edge.id"
             class="edge"
-            :class="{ 'is-dimmed': isEdgeDimmed(e), 'is-escalation': e.isEscalation }"
+            :class="{ 'is-dimmed': isEdgeDimmed(edge), 'is-escalation': edge.isEscalation }"
           >
             <path
-              :d="edgePath(e)"
+              :d="edgePath(edge)"
               fill="none"
-              :style="{ stroke: e.isEscalation ? 'var(--amber-dark)' : 'var(--slate-500)' }"
+              :style="{ stroke: edge.isEscalation ? 'var(--amber-dark)' : 'var(--slate-500)' }"
               stroke-width="1.6"
-              :stroke-dasharray="e.isEscalation ? '5 3' : null"
-              :marker-end="e.isEscalation ? 'url(#arrow-escalation)' : 'url(#arrow)'"
+              :stroke-dasharray="edge.isEscalation ? '5 3' : null"
+              :marker-end="edge.isEscalation ? 'url(#arrow-escalation)' : 'url(#arrow)'"
             />
-            <g v-if="!isEdgeDimmed(e) && e.label" :transform="`translate(${edgeMidpoint(e).x}, ${edgeMidpoint(e).y})`">
+            <g v-if="!isEdgeDimmed(edge) && edge.label" :transform="`translate(${edgeMidpoint(edge).x}, ${edgeMidpoint(edge).y})`">
               <rect
                 x="-3"
                 y="-9"
-                :width="Math.min(220, (e.label.length * 5.3) + 10)"
+                :width="Math.min(220, (edge.label.length * 5.3) + 10)"
                 height="16"
                 rx="2"
                 fill="var(--paper)"
                 stroke="var(--line)"
               />
-              <text x="1" y="3" class="edge-label mono">{{ e.label.slice(0, 38) }}{{ e.label.length > 38 ? '…' : '' }}</text>
+              <text x="1" y="3" class="edge-label mono">{{ edge.label.slice(0, 38) }}{{ edge.label.length > 38 ? '…' : '' }}</text>
             </g>
           </g>
         </g>
 
         <g class="nodes">
           <g
-            v-for="n in nodes"
-            :key="n.id"
-            :transform="`translate(${n.x}, ${n.y})`"
+            v-for="node in positionedNodes"
+            :key="node.id"
+            :transform="`translate(${node.x}, ${node.y})`"
             class="node"
-            :class="[`node--${n.kind}`, { 'is-selected': selectedId === n.id, 'is-dimmed': isNodeDimmed(n) }]"
-            @click="selectNode(n.id)"
-            @dblclick="handleNodeActivate(n.id)"
+            :class="[`node--${node.kind}`, { 'is-selected': selectedNodeId === node.id, 'is-dimmed': isNodeDimmed(node) }]"
+            @click="selectNode(node.id)"
+            @dblclick="handleNodeActivate(node.id)"
             tabindex="0"
             role="button"
-            :aria-label="`${n.displayId || n.id}: ${n.label}`"
+            :aria-label="`${node.displayId || node.id}: ${node.label}`"
           >
-            <title v-if="nodeTooltip(n.id)">{{ nodeTooltip(n.id) }}</title>
-            <rect :width="NODE_W" :height="NODE_H" rx="5" class="node-rect" />
-            <rect :width="4" :height="NODE_H" rx="2" class="node-accent" />
-            <text x="14" y="20" class="node-kind mono">{{ n.kind }}</text>
-            <text x="14" y="38" class="node-id mono">{{ nodeDisplayId(n) }}</text>
-            <foreignObject x="14" y="44" :width="NODE_W - 28" height="30">
-              <div xmlns="http://www.w3.org/1999/xhtml" class="node-label">{{ n.label }}</div>
+            <title v-if="nodeTooltip(node.id)">{{ nodeTooltip(node.id) }}</title>
+            <rect :width="NODE_WIDTH" :height="NODE_HEIGHT" rx="5" class="node-rect" />
+            <rect :width="4" :height="NODE_HEIGHT" rx="2" class="node-accent" />
+            <text x="14" y="20" class="node-kind mono">{{ node.kind }}</text>
+            <text x="14" y="38" class="node-id mono">{{ nodeDisplayId(node) }}</text>
+            <!-- foreignObject lets normal HTML (which wraps text) sit inside SVG. -->
+            <foreignObject x="14" y="44" :width="NODE_WIDTH - 28" height="30">
+              <div xmlns="http://www.w3.org/1999/xhtml" class="node-label">{{ node.label }}</div>
             </foreignObject>
-            <circle v-if="nodeTooltip(n.id)" :cx="NODE_W - 12" cy="12" r="4" class="comment-dot" />
+            <circle v-if="nodeTooltip(node.id)" :cx="NODE_WIDTH - 12" cy="12" r="4" class="comment-dot" />
           </g>
         </g>
       </svg>
     </div>
 
-    <div v-if="selectedId" class="detail-drawer panel">
+    <!-- Details of the selected node: what links into it and out of it. -->
+    <div v-if="selectedNodeId" class="detail-drawer panel">
       <div class="detail-drawer__head">
         <div>
-          <span class="badge" :class="badgeClass(nodesById.get(selectedId)?.kind)">
-            {{ nodesById.get(selectedId)?.kind }}
+          <span class="badge" :class="badgeClass(nodesById.get(selectedNodeId)?.kind)">
+            {{ nodesById.get(selectedNodeId)?.kind }}
           </span>
-          <span class="mono detail-id">{{ nodesById.get(selectedId)?.displayId || selectedId }}</span>
+          <span class="mono detail-id">{{ nodesById.get(selectedNodeId)?.displayId || selectedNodeId }}</span>
         </div>
         <div class="detail-drawer__actions">
           <RouterLink
-            v-if="nodesById.get(selectedId)?.kind === 'step'"
-            :to="`/steps/${encodeURIComponent(selectedId)}`"
+            v-if="nodesById.get(selectedNodeId)?.kind === 'step'"
+            :to="`/steps/${encodeURIComponent(selectedNodeId)}`"
             class="btn btn-secondary"
           >
             Open step →
           </RouterLink>
           <button
-            v-else-if="nodesById.get(selectedId)?.kind === 'playbook'"
+            v-else-if="nodesById.get(selectedNodeId)?.kind === 'playbook'"
             class="btn btn-secondary"
-            @click="switchToTargetPlaybook(selectedId)"
+            @click="switchToTargetPlaybook(selectedNodeId)"
           >
             Switch to this playbook →
           </button>
-          <button class="btn btn-ghost" @click="selectedId = null">Close</button>
+          <button class="btn btn-ghost" @click="selectedNodeId = null">Close</button>
         </div>
       </div>
-      <p class="detail-drawer__label">{{ nodesById.get(selectedId)?.label }}</p>
-      <p v-if="isRoutingPlaybook && nodesById.get(selectedId)?.kind === 'category'" class="detail-drawer__triggers">
-        <strong>Triggers:</strong> {{ categoryTriggersFor(selectedId) }}
+      <p class="detail-drawer__label">{{ nodesById.get(selectedNodeId)?.label }}</p>
+      <p v-if="isRoutingPlaybook && nodesById.get(selectedNodeId)?.kind === 'category'" class="detail-drawer__triggers">
+        <strong>Triggers:</strong> {{ categoryTriggersFor(selectedNodeId) }}
       </p>
       <div class="detail-drawer__lists">
         <div>
-          <h4>Incoming ({{ edges.filter(e => e.to === selectedId).length }})</h4>
+          <h4>Incoming ({{ selectedIncomingEdges.length }})</h4>
           <ul>
-            <li v-for="e in edges.filter(e => e.to === selectedId)" :key="e.id">
-              <span class="mono">{{ nodesById.get(e.from)?.displayId || e.from }}</span> — {{ e.label }}
+            <li v-for="edge in selectedIncomingEdges" :key="edge.id">
+              <span class="mono">{{ nodesById.get(edge.from)?.displayId || edge.from }}</span> — {{ edge.label }}
             </li>
-            <li v-if="!edges.some(e => e.to === selectedId)" class="muted">None (entry point)</li>
+            <li v-if="!selectedIncomingEdges.length" class="muted">None (entry point)</li>
           </ul>
         </div>
         <div>
-          <h4>Outgoing ({{ edges.filter(e => e.from === selectedId).length }})</h4>
+          <h4>Outgoing ({{ selectedOutgoingEdges.length }})</h4>
           <ul>
-            <li v-for="e in edges.filter(e => e.from === selectedId)" :key="e.id">
-              <span class="mono">{{ nodesById.get(e.to)?.displayId || e.to }}</span> — {{ e.label }}
+            <li v-for="edge in selectedOutgoingEdges" :key="edge.id">
+              <span class="mono">{{ nodesById.get(edge.to)?.displayId || edge.to }}</span> — {{ edge.label }}
             </li>
-            <li v-if="!edges.some(e => e.from === selectedId)" class="muted">None (terminal)</li>
+            <li v-if="!selectedOutgoingEdges.length" class="muted">None (terminal)</li>
           </ul>
         </div>
       </div>
@@ -535,10 +616,10 @@ function setZoom(val) {
   </div>
 
   <ExportXmlModal
-    v-if="showExport"
+    v-if="isExportModalOpen"
     :xml="exportedXml"
-    :filename="exportFileName(playbook.playbookName.value)"
-    @close="showExport = false"
+    :filename="exportFileName(playbookStore.playbookName.value)"
+    @close="isExportModalOpen = false"
   />
 </template>
 

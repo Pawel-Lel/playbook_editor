@@ -1,112 +1,127 @@
 <script setup>
+// PlaybooksView — the "Playbook List" page (/playbooks): open .xml files,
+// create, rename, duplicate, delete and switch playbooks.
+//
+// Vue concepts used in this file:
+//  - ref(value): one reactive value; `.value` in script, unwrapped in the template.
+//  - computed(() => ...): a derived value that updates automatically.
+//  - Template refs: `ref="fileInputElement"` on an element in the template
+//    makes the ref of the same name below hold that actual DOM element.
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePlaybooksStore } from '../store/playbooks.js'
 
 const router = useRouter()
-const store = usePlaybooksStore()
+const playbooksStore = usePlaybooksStore()
 
-const showCreate = ref(false)
-const newName = ref('')
+// "New playbook" dialog
+const isCreateDialogOpen = ref(false)
+const newPlaybookName = ref('')
 const createError = ref('')
 
-const renamingId = ref(null)
-const renameValue = ref('')
+// Inline rename: which card is being renamed, and the text typed so far.
+const renamingPlaybookId = ref(null)
+const renameInputText = ref('')
 
-const confirmingDeleteId = ref(null)
+// Delete is two clicks: "Delete" asks, "Confirm delete" does it.
+const playbookIdAwaitingDeleteConfirm = ref(null)
 
-const fileInput = ref(null)
-const filesLoading = ref(false)
-const filesResult = ref(null) // { added, updated, errors } | null
-const filesError = ref('')
+// "Open files…"
+const fileInputElement = ref(null) // the hidden <input type="file"> (template ref)
+const isLoadingFiles = ref(false)
+const openFilesResult = ref(null) // { added, updated, errors } | null
+const openFilesError = ref('')
 
+// The visible button just clicks the hidden file input, which opens the
+// browser's file picker.
 function pickLocalFiles() {
-  fileInput.value.click()
+  fileInputElement.value.click()
 }
 
+// Runs when the person has chosen files in the picker.
 async function onFilesPicked(event) {
-  const picked = Array.from(event.target.files || [])
+  const pickedFiles = Array.from(event.target.files || [])
   event.target.value = '' // so picking the same files again still fires change
-  if (!picked.length) return
-  filesLoading.value = true
-  filesError.value = ''
-  filesResult.value = null
+  if (!pickedFiles.length) return
+  isLoadingFiles.value = true
+  openFilesError.value = ''
+  openFilesResult.value = null
   try {
-    const files = await Promise.all(picked.map(async (f) => ({ name: f.name, text: await f.text() })))
-    const result = store.openLocalFiles(files, {
-      confirmReplace: (names) =>
-        confirm(`These playbooks are already loaded and will be overwritten (unsaved changes lost):\n\n${names.join('\n')}\n\nContinue?`)
+    // Read every file's text (in parallel), then hand them all to the store.
+    const filesWithText = await Promise.all(
+      pickedFiles.map(async (pickedFile) => ({ name: pickedFile.name, text: await pickedFile.text() }))
+    )
+    const result = playbooksStore.openLocalFiles(filesWithText, {
+      confirmReplace: (fileNames) =>
+        confirm(`These playbooks are already loaded and will be overwritten (unsaved changes lost):\n\n${fileNames.join('\n')}\n\nContinue?`)
     })
-    if (!result.cancelled) filesResult.value = result
-  } catch (e) {
-    filesError.value = e.message
+    if (!result.cancelled) openFilesResult.value = result
+  } catch (error) {
+    openFilesError.value = error.message
   } finally {
-    filesLoading.value = false
+    isLoadingFiles.value = false
   }
 }
 
+// Playbooks in alphabetical order. [...list] copies the list first, since
+// sort() would otherwise reorder the store's own array.
 const sortedPlaybooks = computed(() =>
-  [...store.playbooks.value].sort((a, b) => a.playbookName.localeCompare(b.playbookName))
+  [...playbooksStore.playbooks.value].sort((first, second) => first.playbookName.localeCompare(second.playbookName))
 )
 
-function stepCount(playbook) {
-  return playbook.steps.length
-}
-
-function openCreate() {
-  showCreate.value = true
-  newName.value = ''
+function openCreateDialog() {
+  isCreateDialogOpen.value = true
+  newPlaybookName.value = ''
   createError.value = ''
 }
 
 function submitCreate() {
   try {
-    const record = store.createPlaybook(newName.value)
-    showCreate.value = false
+    const createdPlaybook = playbooksStore.createPlaybook(newPlaybookName.value)
+    isCreateDialogOpen.value = false
     router.push('/steps')
-    return record
-  } catch (e) {
-    createError.value = e.message
+    return createdPlaybook
+  } catch (error) {
+    createError.value = error.message
   }
 }
 
-
-function switchTo(id) {
-  store.setActivePlaybookId(id)
+function switchToPlaybook(playbookId) {
+  playbooksStore.setActivePlaybookId(playbookId)
   router.push('/steps')
 }
 
 function startRename(playbook) {
-  renamingId.value = playbook.id
-  renameValue.value = playbook.playbookName
+  renamingPlaybookId.value = playbook.id
+  renameInputText.value = playbook.playbookName
 }
 function cancelRename() {
-  renamingId.value = null
+  renamingPlaybookId.value = null
 }
-function submitRename(id) {
+function submitRename(playbookId) {
   try {
-    store.renamePlaybook(id, renameValue.value)
-    renamingId.value = null
-  } catch (e) {
+    playbooksStore.renamePlaybook(playbookId, renameInputText.value)
+    renamingPlaybookId.value = null
+  } catch {
     // keep the row open with the input so they can fix it
   }
 }
 
-function duplicate(id) {
-  store.duplicatePlaybook(id)
+function duplicatePlaybook(playbookId) {
+  playbooksStore.duplicatePlaybook(playbookId)
 }
 
-function askDelete(id) {
-  confirmingDeleteId.value = id
+function askDelete(playbookId) {
+  playbookIdAwaitingDeleteConfirm.value = playbookId
 }
 function cancelDelete() {
-  confirmingDeleteId.value = null
+  playbookIdAwaitingDeleteConfirm.value = null
 }
-function confirmDelete(id) {
+function confirmDelete(playbookId) {
   try {
-    store.deletePlaybook(id)
+    playbooksStore.deletePlaybook(playbookId)
   } finally {
-    confirmingDeleteId.value = null
+    playbookIdAwaitingDeleteConfirm.value = null
   }
 }
 </script>
@@ -126,84 +141,89 @@ function confirmDelete(id) {
       <div class="page-head__actions">
         <button
           class="btn btn-secondary"
-          :disabled="filesLoading"
+          :disabled="isLoadingFiles"
           title="Load one or more playbook .xml files from this computer"
           @click="pickLocalFiles"
         >
-          {{ filesLoading ? 'Loading…' : 'Open files…' }}
+          {{ isLoadingFiles ? 'Loading…' : 'Open files…' }}
         </button>
+        <!-- Hidden; opened by the button above. `multiple` allows picking several files. -->
         <input
-          ref="fileInput"
+          ref="fileInputElement"
           type="file"
           accept=".xml,application/xml,text/xml"
           multiple
           hidden
           @change="onFilesPicked"
         />
-        <button class="btn btn-primary" @click="openCreate">+ New playbook</button>
+        <button class="btn btn-primary" @click="openCreateDialog">+ New playbook</button>
       </div>
     </div>
 
-    <p v-if="filesError" class="form-error">{{ filesError }}</p>
-    <div v-if="filesResult" class="files-result" :class="{ 'has-errors': filesResult.errors.length }">
-      <template v-if="filesResult.added || filesResult.updated">
-        <template v-if="filesResult.added">
-          Added {{ filesResult.added }} playbook{{ filesResult.added === 1 ? '' : 's' }}.
+    <!-- Result of "Open files…": what was added/updated, and any files that failed. -->
+    <p v-if="openFilesError" class="form-error">{{ openFilesError }}</p>
+    <div v-if="openFilesResult" class="files-result" :class="{ 'has-errors': openFilesResult.errors.length }">
+      <template v-if="openFilesResult.added || openFilesResult.updated">
+        <template v-if="openFilesResult.added">
+          Added {{ openFilesResult.added }} playbook{{ openFilesResult.added === 1 ? '' : 's' }}.
         </template>
-        <template v-if="filesResult.updated">
-          Updated {{ filesResult.updated }} existing playbook{{ filesResult.updated === 1 ? '' : 's' }}.
+        <template v-if="openFilesResult.updated">
+          Updated {{ openFilesResult.updated }} existing playbook{{ openFilesResult.updated === 1 ? '' : 's' }}.
         </template>
       </template>
       <template v-else>No playbooks loaded — nothing was changed.</template>
-      <ul v-if="filesResult.errors.length">
-        <li v-for="err in filesResult.errors" :key="err.name">
-          <span class="mono">{{ err.name }}</span>: {{ err.message }}
+      <ul v-if="openFilesResult.errors.length">
+        <li v-for="fileError in openFilesResult.errors" :key="fileError.name">
+          <span class="mono">{{ fileError.name }}</span>: {{ fileError.message }}
         </li>
       </ul>
     </div>
 
+    <!-- One card per playbook. -->
     <ul class="playbook-list">
       <li
-        v-for="p in sortedPlaybooks"
-        :key="p.id"
+        v-for="playbook in sortedPlaybooks"
+        :key="playbook.id"
         class="playbook-card panel"
-        :class="{ 'is-active': p.id === store.activePlaybookId.value }"
+        :class="{ 'is-active': playbook.id === playbooksStore.activePlaybookId.value }"
       >
         <div class="playbook-card__main">
           <div class="playbook-card__head">
-            <span v-if="p.id === store.activePlaybookId.value" class="badge badge-terminal">Active</span>
-            <span class="mono playbook-card__id">{{ p.id }}</span>
+            <span v-if="playbook.id === playbooksStore.activePlaybookId.value" class="badge badge-terminal">Active</span>
+            <span class="mono playbook-card__id">{{ playbook.id }}</span>
           </div>
 
-          <template v-if="renamingId === p.id">
+          <!-- While renaming, the name turns into a text box.
+               @keyup.enter / @keyup.esc react to those specific keys. -->
+          <template v-if="renamingPlaybookId === playbook.id">
             <div class="rename-row">
-              <input v-model="renameValue" type="text" @keyup.enter="submitRename(p.id)" @keyup.esc="cancelRename" />
-              <button class="btn btn-secondary" @click="submitRename(p.id)">Save</button>
+              <input v-model="renameInputText" type="text" @keyup.enter="submitRename(playbook.id)" @keyup.esc="cancelRename" />
+              <button class="btn btn-secondary" @click="submitRename(playbook.id)">Save</button>
               <button class="btn btn-ghost" @click="cancelRename">Cancel</button>
             </div>
           </template>
-          <h3 v-else class="playbook-card__name">{{ p.playbookName || '(untitled playbook)' }}</h3>
+          <h3 v-else class="playbook-card__name">{{ playbook.playbookName || '(untitled playbook)' }}</h3>
 
           <p class="playbook-card__meta">
-            {{ stepCount(p) }} step{{ stepCount(p) === 1 ? '' : 's' }} ·
-            {{ p.guidelines.length }} guideline{{ p.guidelines.length === 1 ? '' : 's' }} ·
-            {{ p.escalations.length }} escalation{{ p.escalations.length === 1 ? '' : 's' }}
+            {{ playbook.steps.length }} step{{ playbook.steps.length === 1 ? '' : 's' }} ·
+            {{ playbook.guidelines.length }} guideline{{ playbook.guidelines.length === 1 ? '' : 's' }} ·
+            {{ playbook.escalations.length }} escalation{{ playbook.escalations.length === 1 ? '' : 's' }}
           </p>
         </div>
 
         <div class="playbook-card__actions">
           <button
-            v-if="p.id !== store.activePlaybookId.value"
+            v-if="playbook.id !== playbooksStore.activePlaybookId.value"
             class="btn btn-primary"
-            @click="switchTo(p.id)"
+            @click="switchToPlaybook(playbook.id)"
           >
             Switch to this playbook
           </button>
           <button v-else class="btn btn-secondary" disabled>Currently active</button>
-          <button class="btn btn-ghost" @click="startRename(p)">Rename</button>
-          <button class="btn btn-ghost" @click="duplicate(p.id)">Duplicate</button>
-          <template v-if="confirmingDeleteId === p.id">
-            <button class="btn btn-danger" :disabled="store.playbooks.value.length <= 1" @click="confirmDelete(p.id)">
+          <button class="btn btn-ghost" @click="startRename(playbook)">Rename</button>
+          <button class="btn btn-ghost" @click="duplicatePlaybook(playbook.id)">Duplicate</button>
+          <template v-if="playbookIdAwaitingDeleteConfirm === playbook.id">
+            <button class="btn btn-danger" :disabled="playbooksStore.playbooks.value.length <= 1" @click="confirmDelete(playbook.id)">
               Confirm delete
             </button>
             <button class="btn btn-ghost" @click="cancelDelete">Cancel</button>
@@ -211,9 +231,9 @@ function confirmDelete(id) {
           <button
             v-else
             class="btn btn-ghost"
-            :disabled="store.playbooks.value.length <= 1"
-            :title="store.playbooks.value.length <= 1 ? 'At least one playbook must remain' : ''"
-            @click="askDelete(p.id)"
+            :disabled="playbooksStore.playbooks.value.length <= 1"
+            :title="playbooksStore.playbooks.value.length <= 1 ? 'At least one playbook must remain' : ''"
+            @click="askDelete(playbook.id)"
           >
             Delete
           </button>
@@ -221,7 +241,9 @@ function confirmDelete(id) {
       </li>
     </ul>
 
-    <div v-if="showCreate" class="overlay" @click.self="showCreate = false">
+    <!-- "New playbook" dialog. @click.self closes it only when the dark
+         backdrop itself is clicked, not the dialog box inside it. -->
+    <div v-if="isCreateDialogOpen" class="overlay" @click.self="isCreateDialogOpen = false">
       <div class="modal panel">
         <h2>New playbook</h2>
         <p class="hint">Starts empty — add steps and settings for it once created.</p>
@@ -229,7 +251,7 @@ function confirmDelete(id) {
           <label for="newPlaybookName">Playbook name</label>
           <input
             id="newPlaybookName"
-            v-model="newName"
+            v-model="newPlaybookName"
             type="text"
             placeholder="e.g. Electrical Appliance Diagnosis"
             @keyup.enter="submitCreate"
@@ -237,7 +259,7 @@ function confirmDelete(id) {
         </div>
         <p v-if="createError" class="form-error">{{ createError }}</p>
         <div class="modal__actions">
-          <button class="btn btn-secondary" @click="showCreate = false">Cancel</button>
+          <button class="btn btn-secondary" @click="isCreateDialogOpen = false">Cancel</button>
           <button class="btn btn-primary" @click="submitCreate">Create playbook</button>
         </div>
       </div>

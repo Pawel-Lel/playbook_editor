@@ -1,7 +1,16 @@
+// Cloud sync store: Google sign-in status, and loading/saving playbooks
+// from/to the Google Cloud Storage bucket.
+//
+// Vue concepts used here:
+//  - reactive(object): an object Vue watches for changes (see syncState).
+//  - watch(source, callback): runs callback when source changes — used to
+//    save the auto-sync preference to localStorage.
+//  - computed(() => ...): read-only derived values handed to components.
 import { reactive, watch, computed } from 'vue'
-import * as gcs from '../services/gcsClient.js'
+import * as googleCloudStorage from '../services/gcsClient.js'
 import { googleOAuthClientId, gcsBucket, gcsObjectPrefix } from '../config/runtimeConfig.js'
 
+// localStorage key for this browser's Cloud sync preferences.
 const CONFIG_KEY = 'playbook-editor:cloud-sync-config:v1'
 
 // Bucket, folder prefix and OAuth Client ID come from the deployment's
@@ -19,26 +28,27 @@ function defaultConfig() {
 
 function loadConfig() {
   try {
-    const raw = localStorage.getItem(CONFIG_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object') return { ...defaultConfig(), autoSync: !!parsed.autoSync }
+    const savedJson = localStorage.getItem(CONFIG_KEY)
+    if (savedJson) {
+      const savedConfig = JSON.parse(savedJson)
+      if (savedConfig && typeof savedConfig === 'object') return { ...defaultConfig(), autoSync: !!savedConfig.autoSync }
     }
-  } catch (e) {
-    console.warn('Could not read saved cloud sync config.', e)
+  } catch (error) {
+    console.warn('Could not read saved cloud sync config.', error)
   }
   return defaultConfig()
 }
 
-const state = reactive({
+// THE shared state of this store.
+const syncState = reactive({
   config: loadConfig(),
   // Signing in is required to use the app at all (see the router guard);
   // a token restored from this tab's session counts.
-  signedIn: gcs.isSignedIn(),
+  signedIn: googleCloudStorage.isSignedIn(),
   // True once this tab's token has run out: the next sign-in only
   // re-authenticates, it doesn't reload (and overwrite) the playbooks.
-  sessionExpired: gcs.hadSession() && !gcs.isSignedIn(),
-  userEmail: gcs.getUserEmail(),
+  sessionExpired: googleCloudStorage.hadSession() && !googleCloudStorage.isSignedIn(),
+  userEmail: googleCloudStorage.getUserEmail(),
   syncing: false,
   lastSyncedAt: null,
   lastError: '',
@@ -47,12 +57,12 @@ const state = reactive({
 })
 
 watch(
-  () => state.config,
-  (val) => {
+  () => syncState.config,
+  (newConfig) => {
     try {
-      localStorage.setItem(CONFIG_KEY, JSON.stringify(val))
-    } catch (e) {
-      console.warn('Could not persist cloud sync config.', e)
+      localStorage.setItem(CONFIG_KEY, JSON.stringify(newConfig))
+    } catch (error) {
+      console.warn('Could not persist cloud sync config.', error)
     }
   },
   { deep: true }
@@ -62,7 +72,7 @@ watch(
 // actual list/parse/save work (it owns the data and the XML shape) so this
 // module never has to import it directly — avoids a circular import while
 // still letting playbooks.js trigger an auto-save on every local change.
-const registry = new Map() // key -> { loadAll(bucket, prefix), saveAll(bucket, prefix), saveOne(bucket, prefix) }
+const syncTargets = new Map() // name -> { loadAll(bucket, prefix), saveAll(bucket, prefix), saveOne(bucket, prefix) }
 
 let expiryTimer = null
 
@@ -70,19 +80,19 @@ let expiryTimer = null
 // short-lived Google token runs out.
 function scheduleExpiry() {
   clearTimeout(expiryTimer)
-  if (!state.signedIn) return
-  const ms = gcs.getTokenExpiresAt() - Date.now() - 5000
-  if (ms <= 0) {
-    state.signedIn = false
-    state.sessionExpired = true
+  if (!syncState.signedIn) return
+  const millisecondsLeft = googleCloudStorage.getTokenExpiresAt() - Date.now() - 5000
+  if (millisecondsLeft <= 0) {
+    syncState.signedIn = false
+    syncState.sessionExpired = true
     return
   }
-  expiryTimer = setTimeout(scheduleExpiry, ms)
+  expiryTimer = setTimeout(scheduleExpiry, millisecondsLeft)
 }
 scheduleExpiry()
 
-export function registerSyncTarget(key, { loadAll, saveAll, saveOne }) {
-  registry.set(key, { loadAll, saveAll, saveOne })
+export function registerSyncTarget(targetName, { loadAll, saveAll, saveOne }) {
+  syncTargets.set(targetName, { loadAll, saveAll, saveOne })
 }
 
 let autoSaveTimer = null
@@ -94,66 +104,70 @@ let autoSaveTimer = null
  * bucket holds one file per playbook.
  */
 export function scheduleAutoSave() {
-  if (!state.config.autoSync || !state.signedIn || !BUCKET) return
+  if (!syncState.config.autoSync || !syncState.signedIn || !BUCKET) return
+  // "Debounce": each new change restarts the 1.5 s countdown, so the save
+  // only happens once the person pauses typing.
   if (autoSaveTimer) clearTimeout(autoSaveTimer)
   autoSaveTimer = setTimeout(() => {
     Promise.all(
-      Array.from(registry.values()).map((entry) =>
-        entry.saveOne?.(BUCKET, OBJECT_PREFIX)
+      Array.from(syncTargets.values()).map((syncTarget) =>
+        syncTarget.saveOne?.(BUCKET, OBJECT_PREFIX)
       )
     )
       .then(() => {
-        state.lastSyncedAt = new Date().toISOString()
-        state.lastError = ''
+        syncState.lastSyncedAt = new Date().toISOString()
+        syncState.lastError = ''
       })
-      .catch((e) => {
-        state.lastError = e.message
+      .catch((error) => {
+        syncState.lastError = error.message
       })
   }, 1500)
 }
 
 async function loadFromBucketInternal() {
-  state.syncing = true
-  state.lastAction = 'load'
+  syncState.syncing = true
+  syncState.lastAction = 'load'
   try {
     let summary = { loadedCount: 0, errors: [] }
-    for (const entry of registry.values()) {
-      const result = await entry.loadAll(BUCKET, OBJECT_PREFIX)
-      if (result) summary = result
+    for (const syncTarget of syncTargets.values()) {
+      const loadResult = await syncTarget.loadAll(BUCKET, OBJECT_PREFIX)
+      if (loadResult) summary = loadResult
     }
-    state.lastSyncedAt = new Date().toISOString()
-    state.lastError = summary.errors.length
+    syncState.lastSyncedAt = new Date().toISOString()
+    syncState.lastError = summary.errors.length
       ? `Loaded ${summary.loadedCount}, but ${summary.errors.length} file(s) failed — see below.`
       : ''
-    state.lastLoadSummary = summary
+    syncState.lastLoadSummary = summary
     return summary
   } finally {
-    state.syncing = false
+    syncState.syncing = false
   }
 }
 
 async function saveToBucketInternal() {
   if (!BUCKET) return
-  state.syncing = true
-  state.lastAction = 'save'
+  syncState.syncing = true
+  syncState.lastAction = 'save'
   try {
-    for (const entry of registry.values()) {
-      await entry.saveAll(BUCKET, OBJECT_PREFIX)
+    for (const syncTarget of syncTargets.values()) {
+      await syncTarget.saveAll(BUCKET, OBJECT_PREFIX)
     }
-    state.lastSyncedAt = new Date().toISOString()
-    state.lastError = ''
+    syncState.lastSyncedAt = new Date().toISOString()
+    syncState.lastError = ''
   } finally {
-    state.syncing = false
+    syncState.syncing = false
   }
 }
 
+// What components call to use this store: const cloudSync = useCloudSyncStore()
 export function useCloudSyncStore() {
-  const config = computed(() => state.config)
+  const config = computed(() => syncState.config)
   const isConfigured = computed(() => !!BUCKET)
-  const canWrite = computed(() => isConfigured.value && !!CLIENT_ID && state.signedIn)
+  const canWrite = computed(() => isConfigured.value && !!CLIENT_ID && syncState.signedIn)
 
-  function updateConfig(patch) {
-    Object.assign(state.config, patch)
+  // Merges the given fields into the config, e.g. updateConfig({ autoSync: true }).
+  function updateConfig(changedFields) {
+    Object.assign(syncState.config, changedFields)
   }
 
   /**
@@ -165,38 +179,38 @@ export function useCloudSyncStore() {
    */
   async function connect() {
     if (!CLIENT_ID) throw new Error('Sign-in is not configured — set the GOOGLE_OAUTH_CLIENT_ID environment variable.')
-    state.lastError = ''
-    const reauthenticating = state.sessionExpired
-    await gcs.requestAccessToken(CLIENT_ID)
+    syncState.lastError = ''
+    const reauthenticating = syncState.sessionExpired
+    await googleCloudStorage.requestAccessToken(CLIENT_ID)
     if (isConfigured.value) {
       try {
-        await gcs.checkBucketAccess(BUCKET, OBJECT_PREFIX)
-      } catch (e) {
-        gcs.clearAccessToken()
-        throw e
+        await googleCloudStorage.checkBucketAccess(BUCKET, OBJECT_PREFIX)
+      } catch (accessError) {
+        googleCloudStorage.clearAccessToken()
+        throw accessError
       }
     }
-    state.userEmail = await gcs.fetchUserEmail()
-    state.signedIn = true
-    state.sessionExpired = false
+    syncState.userEmail = await googleCloudStorage.fetchUserEmail()
+    syncState.signedIn = true
+    syncState.sessionExpired = false
     scheduleExpiry()
     // "Load all playbooks available in the bucket once the person logs in."
     if (isConfigured.value && !reauthenticating) {
       try {
         await loadFromBucketInternal()
-      } catch (e) {
+      } catch (loadError) {
         // Signed in regardless; the Cloud sync page shows what went wrong.
-        state.lastError = e.message
+        syncState.lastError = loadError.message
       }
     }
   }
 
   function disconnect() {
-    gcs.clearAccessToken()
+    googleCloudStorage.clearAccessToken()
     clearTimeout(expiryTimer)
-    state.signedIn = false
-    state.sessionExpired = false
-    state.userEmail = ''
+    syncState.signedIn = false
+    syncState.sessionExpired = false
+    syncState.userEmail = ''
   }
 
   async function loadFromBucket() {
@@ -206,7 +220,7 @@ export function useCloudSyncStore() {
 
   async function saveToBucket() {
     if (!isConfigured.value) throw new Error('No bucket configured — set the GCS_BUCKET environment variable.')
-    if (!state.signedIn) throw new Error('Sign in with Google first.')
+    if (!syncState.signedIn) throw new Error('Sign in with Google first.')
     return saveToBucketInternal()
   }
 
@@ -217,14 +231,14 @@ export function useCloudSyncStore() {
     clientId: CLIENT_ID,
     isConfigured,
     canWrite,
-    signedIn: computed(() => state.signedIn),
-    sessionExpired: computed(() => state.sessionExpired),
-    userEmail: computed(() => state.userEmail),
-    syncing: computed(() => state.syncing),
-    lastSyncedAt: computed(() => state.lastSyncedAt),
-    lastError: computed(() => state.lastError),
-    lastAction: computed(() => state.lastAction),
-    lastLoadSummary: computed(() => state.lastLoadSummary),
+    signedIn: computed(() => syncState.signedIn),
+    sessionExpired: computed(() => syncState.sessionExpired),
+    userEmail: computed(() => syncState.userEmail),
+    syncing: computed(() => syncState.syncing),
+    lastSyncedAt: computed(() => syncState.lastSyncedAt),
+    lastError: computed(() => syncState.lastError),
+    lastAction: computed(() => syncState.lastAction),
+    lastLoadSummary: computed(() => syncState.lastLoadSummary),
     updateConfig,
     connect,
     disconnect,

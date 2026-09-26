@@ -1,19 +1,24 @@
 <script setup>
+// StepCreateView — the "Create a step" page (/steps/new). The form itself
+// lives in StepForm.vue; this page only saves what the form submits.
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import StepForm from '../components/StepForm.vue'
 import { useStepsStore } from '../store/steps.js'
 
 const router = useRouter()
-const store = useStepsStore()
+const stepsStore = useStepsStore()
+// Shown at the top of the form when saving fails (e.g. duplicate step ID).
 const errorMessage = ref('')
 
-function handleSubmit(data) {
+// Called when StepForm emits 'submit' (see @submit below).
+function handleSubmit(submittedStep) {
   try {
-    const step = store.createStep(data)
-    router.push(`/steps/${encodeURIComponent(step.id)}`)
-  } catch (e) {
-    errorMessage.value = e.message
+    const createdStep = stepsStore.createStep(submittedStep)
+    // Go to the new step's edit page.
+    router.push(`/steps/${encodeURIComponent(createdStep.id)}`)
+  } catch (error) {
+    errorMessage.value = error.message
   }
 }
 </script>
@@ -30,8 +35,8 @@ function handleSubmit(data) {
 
     <StepForm
       mode="create"
-      :initial="null"
-      :all-targets="store.allReferencedTargets.value"
+      :initial-step="null"
+      :all-targets="stepsStore.allReferencedTargets.value"
       :error-message="errorMessage"
       @submit="handleSubmit"
       @cancel="router.push('/steps')"

@@ -15,30 +15,34 @@ export function isSupported() {
   return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
 }
 
-function openDb() {
+// IndexedDB is the browser's built-in database; unlike localStorage it can
+// store a folder handle. These two helpers open it and run one operation.
+function openDatabase() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1)
-    req.onupgradeneeded = () => req.result.createObjectStore(DB_STORE)
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
+    const openRequest = indexedDB.open(DB_NAME, 1)
+    openRequest.onupgradeneeded = () => openRequest.result.createObjectStore(DB_STORE)
+    openRequest.onsuccess = () => resolve(openRequest.result)
+    openRequest.onerror = () => reject(openRequest.error)
   })
 }
 
-async function idb(mode, fn) {
-  const db = await openDb()
+// Runs `operation(objectStore)` in a transaction and resolves with its result.
+async function runInHandleStore(transactionMode, operation) {
+  const database = await openDatabase()
   try {
     return await new Promise((resolve, reject) => {
-      const tx = db.transaction(DB_STORE, mode)
-      const req = fn(tx.objectStore(DB_STORE))
-      tx.oncomplete = () => resolve(req?.result)
-      tx.onerror = () => reject(tx.error)
+      const transaction = database.transaction(DB_STORE, transactionMode)
+      const operationRequest = operation(transaction.objectStore(DB_STORE))
+      transaction.oncomplete = () => resolve(operationRequest?.result)
+      transaction.onerror = () => reject(transaction.error)
     })
   } finally {
-    db.close()
+    database.close()
   }
 }
 
-let dirHandle = null
+// The chosen folder, kept in memory after the first lookup.
+let rememberedFolderHandle = null
 
 /**
  * The previously chosen folder, if any (from memory or IndexedDB). Doesn't
@@ -46,13 +50,13 @@ let dirHandle = null
  * @returns {Promise<FileSystemDirectoryHandle|null>}
  */
 export async function getRememberedFolder() {
-  if (dirHandle || !isSupported()) return dirHandle
+  if (rememberedFolderHandle || !isSupported()) return rememberedFolderHandle
   try {
-    dirHandle = (await idb('readonly', (s) => s.get(DIR_KEY))) || null
-  } catch (e) {
-    console.warn('Could not read the remembered save folder.', e)
+    rememberedFolderHandle = (await runInHandleStore('readonly', (handleStore) => handleStore.get(DIR_KEY))) || null
+  } catch (error) {
+    console.warn('Could not read the remembered save folder.', error)
   }
-  return dirHandle
+  return rememberedFolderHandle
 }
 
 /**
@@ -61,20 +65,21 @@ export async function getRememberedFolder() {
  * @returns {Promise<FileSystemDirectoryHandle>}
  */
 export async function chooseFolder() {
-  const handle = await window.showDirectoryPicker({ id: 'playbook-editor-save', mode: 'readwrite' })
-  dirHandle = handle
+  const folderHandle = await window.showDirectoryPicker({ id: 'playbook-editor-save', mode: 'readwrite' })
+  rememberedFolderHandle = folderHandle
   try {
-    await idb('readwrite', (s) => s.put(handle, DIR_KEY))
-  } catch (e) {
-    console.warn('Could not remember the save folder.', e)
+    await runInHandleStore('readwrite', (handleStore) => handleStore.put(folderHandle, DIR_KEY))
+  } catch (error) {
+    console.warn('Could not remember the save folder.', error)
   }
-  return handle
+  return folderHandle
 }
 
-async function ensureWritable(handle) {
-  const opts = { mode: 'readwrite' }
-  if ((await handle.queryPermission(opts)) === 'granted') return true
-  return (await handle.requestPermission(opts)) === 'granted'
+// Asks the browser for write permission on the folder, if not already granted.
+async function ensureWritable(folderHandle) {
+  const permissionOptions = { mode: 'readwrite' }
+  if ((await folderHandle.queryPermission(permissionOptions)) === 'granted') return true
+  return (await folderHandle.requestPermission(permissionOptions)) === 'granted'
 }
 
 /**
@@ -86,12 +91,12 @@ async function ensureWritable(handle) {
  * @returns {Promise<string>} the folder's name, for status messages
  */
 export async function writeTextFile(fileName, content) {
-  let handle = await getRememberedFolder()
-  if (!handle || !(await ensureWritable(handle))) handle = await chooseFolder()
-  const fileHandle = await handle.getFileHandle(fileName, { create: true })
-  const writable = await fileHandle.createWritable()
-  await writable.write(content)
-  await writable.close()
-  return handle.name
+  let folderHandle = await getRememberedFolder()
+  if (!folderHandle || !(await ensureWritable(folderHandle))) folderHandle = await chooseFolder()
+  const fileHandle = await folderHandle.getFileHandle(fileName, { create: true })
+  const fileWriter = await fileHandle.createWritable()
+  await fileWriter.write(content)
+  await fileWriter.close()
+  return folderHandle.name
 }
 

@@ -5,18 +5,18 @@
 //
 // Uses the browser's native DOMParser — this module only works client-side.
 
-let uid = 0
-const nextId = (prefix) => `${prefix}${Date.now()}_${++uid}`
+let generatedIdCounter = 0
+const generateId = (prefix) => `${prefix}${Date.now()}_${++generatedIdCounter}`
 
-function textOf(el) {
-  return el ? (el.textContent || '').trim() : ''
+function textOf(element) {
+  return element ? (element.textContent || '').trim() : ''
 }
 
-function attr(el, name) {
-  return el ? el.getAttribute(name) || '' : ''
+function attributeValue(element, name) {
+  return element ? element.getAttribute(name) || '' : ''
 }
 
-function firstChild(parent, tagName) {
+function firstChildByTag(parent, tagName) {
   if (!parent) return null
   for (const child of parent.children) {
     if (child.tagName === tagName) return child
@@ -24,9 +24,9 @@ function firstChild(parent, tagName) {
   return null
 }
 
-function children(parent, tagName) {
+function childElementsByTag(parent, tagName) {
   if (!parent) return []
-  return Array.from(parent.children).filter((c) => c.tagName === tagName)
+  return Array.from(parent.children).filter((childElement) => childElement.tagName === tagName)
 }
 
 // Collects the XML comment(s) that sit immediately before `el` (skipping
@@ -34,19 +34,19 @@ function children(parent, tagName) {
 // line — the reverse of xmlExport.js's buildCommentBlock, which splits a
 // `comment` field on blank lines into separate stacked <!-- --> blocks.
 // Each comment's own internal line breaks are preserved as written.
-function collectPrecedingComments(el) {
-  if (!el) return ''
-  const found = []
-  let node = el.previousSibling
+function collectPrecedingComments(element) {
+  if (!element) return ''
+  const comments = []
+  let node = element.previousSibling
   while (node) {
     if (node.nodeType === 8) {
       // Comment node
-      const cleaned = node.textContent
+      const commentText = node.textContent
         .split('\n')
-        .map((l) => l.trim())
+        .map((line) => line.trim())
         .join('\n')
         .trim()
-      if (cleaned) found.unshift(cleaned)
+      if (commentText) comments.unshift(commentText)
     } else if (node.nodeType === 3 && node.textContent.trim() === '') {
       // whitespace-only text node between elements — keep looking further back
     } else {
@@ -54,40 +54,40 @@ function collectPrecedingComments(el) {
     }
     node = node.previousSibling
   }
-  return found.join('\n\n')
+  return comments.join('\n\n')
 }
 
 // Serializes an element's children verbatim (for the rawXml escape hatch),
 // then strips the source document's indentation so the result is the same
 // left-aligned text the exporter re-indents. Without the dedent, every
 // import → export cycle would push raw policy bodies further right.
-function serializeChildrenXml(el) {
+function serializeChildrenXml(element) {
   const serializer = new XMLSerializer()
-  const raw = Array.from(el.childNodes)
-    .map((n) => serializer.serializeToString(n))
+  const serializedXml = Array.from(element.childNodes)
+    .map((childNode) => serializer.serializeToString(childNode))
     .join('')
-  const lines = raw.replace(/\r\n/g, '\n').split('\n')
+  const lines = serializedXml.replace(/\r\n/g, '\n').split('\n')
   while (lines.length && !lines[0].trim()) lines.shift()
   while (lines.length && !lines[lines.length - 1].trim()) lines.pop()
   if (!lines.length) return ''
   // The first line's indent was eaten by the parent's opening tag, so
   // measure the common indent from the remaining non-blank lines.
   lines[0] = lines[0].trimStart()
-  const indents = lines
+  const lineIndents = lines
     .slice(1)
-    .filter((l) => l.trim())
-    .map((l) => l.match(/^[ \t]*/)[0].length)
-  const common = indents.length ? Math.min(...indents) : 0
+    .filter((line) => line.trim())
+    .map((line) => line.match(/^[ \t]*/)[0].length)
+  const commonIndent = lineIndents.length ? Math.min(...lineIndents) : 0
   // Nested lines are one level deeper than the first line's siblings, so
   // keep the relative depth by dedenting by the smallest indent among
   // lines that start a sibling tag at the first line's level.
   const siblingIndents = lines
     .slice(1)
-    .filter((l) => /^\s*<(?!\/)/.test(l) || /^\s*<\//.test(l))
-    .map((l) => l.match(/^[ \t]*/)[0].length)
-  const base = siblingIndents.length ? Math.min(...siblingIndents) : common
+    .filter((line) => /^\s*<(?!\/)/.test(line) || /^\s*<\//.test(line))
+    .map((line) => line.match(/^[ \t]*/)[0].length)
+  const dedentAmount = siblingIndents.length ? Math.min(...siblingIndents) : commonIndent
   return lines
-    .map((l, i) => (i === 0 ? l : l.slice(Math.min(base, l.match(/^[ \t]*/)[0].length))).trimEnd())
+    .map((line, lineIndex) => (lineIndex === 0 ? line : line.slice(Math.min(dedentAmount, line.match(/^[ \t]*/)[0].length))).trimEnd())
     .join('\n')
 }
 
@@ -98,30 +98,30 @@ function serializeChildrenXml(el) {
 // their line break, so structured text still round-trips.
 const BULLET_RE = /^([-*\u2022]|\d+[.)])\s/
 export function prose(text) {
-  const lines = String(text ?? '').split(/\r?\n/).map((l) => l.trim())
-  const out = []
-  let blankPending = false
+  const lines = String(text ?? '').split(/\r?\n/).map((line) => line.trim())
+  const joinedLines = []
+  let hadBlankLine = false
   lines.forEach((line) => {
     if (!line) {
-      if (out.length) blankPending = true
+      if (joinedLines.length) hadBlankLine = true
       return
     }
-    if (!out.length) {
-      out.push(line)
-    } else if (blankPending) {
-      out.push('', line)
+    if (!joinedLines.length) {
+      joinedLines.push(line)
+    } else if (hadBlankLine) {
+      joinedLines.push('', line)
     } else if (BULLET_RE.test(line)) {
-      out.push(line)
+      joinedLines.push(line)
     } else {
-      out[out.length - 1] = `${out[out.length - 1]} ${line}`
+      joinedLines[joinedLines.length - 1] = `${joinedLines[joinedLines.length - 1]} ${line}`
     }
-    blankPending = false
+    hadBlankLine = false
   })
-  return out.join('\n').trim()
+  return joinedLines.join('\n').trim()
 }
 
-function proseOf(el) {
-  return el ? prose(el.textContent || '') : ''
+function proseOf(element) {
+  return element ? prose(element.textContent || '') : ''
 }
 
 // Top-level section tag → the key used by sectionOrder / sectionComments.
@@ -140,14 +140,14 @@ const SECTION_KEY_BY_TAG = {
 // Records which top-level sections the document contains (in document
 // order) and the XML comment sitting directly above each one, e.g.
 // "<!-- STEP 1: CLARIFY AMBIGUOUS INPUTS -->", so export reproduces both.
-function parseDocumentLayout(root) {
+function parseDocumentLayout(rootElement) {
   const sectionOrder = []
   const sectionComments = {}
-  Array.from(root.children).forEach((el) => {
-    const key = SECTION_KEY_BY_TAG[el.tagName]
-    if (!key || sectionOrder.includes(key)) return
-    sectionOrder.push(key)
-    sectionComments[key] = prose(collectPrecedingComments(el))
+  Array.from(rootElement.children).forEach((sectionElement) => {
+    const sectionKey = SECTION_KEY_BY_TAG[sectionElement.tagName]
+    if (!sectionKey || sectionOrder.includes(sectionKey)) return
+    sectionOrder.push(sectionKey)
+    sectionComments[sectionKey] = prose(collectPrecedingComments(sectionElement))
   })
   return { sectionOrder, sectionComments }
 }
@@ -157,23 +157,23 @@ function parseDocumentLayout(root) {
 // two different styles seen in the wild; a playbook may use either (or, in
 // principle, both) so both are always parsed.
 // ---------------------------------------------------------------------
-function parseSetup(root) {
-  const setupEl = firstChild(root, 'SETUP')
+function parseSetup(rootElement) {
+  const setupElement = firstChildByTag(rootElement, 'SETUP')
   let playbookName = ''
-  if (setupEl) {
-    const paramEl = Array.from(setupEl.children).find(
-      (c) => c.tagName === 'PARAMETER_ASSIGNMENT' && attr(c, 'name') === 'param_playbook_name'
+  if (setupElement) {
+    const playbookNameParamElement = Array.from(setupElement.children).find(
+      (childElement) => childElement.tagName === 'PARAMETER_ASSIGNMENT' && attributeValue(childElement, 'name') === 'param_playbook_name'
     )
-    playbookName = paramEl ? attr(paramEl, 'value') : ''
+    playbookName = playbookNameParamElement ? attributeValue(playbookNameParamElement, 'value') : ''
   }
-  const ctxEl = firstChild(setupEl, 'CONTEXT_HANDLING')
+  const contextHandlingElement = firstChildByTag(setupElement, 'CONTEXT_HANDLING')
   return {
     playbookName,
     setup: {
-      contextInstruction: textOf(firstChild(ctxEl, 'INSTRUCTION')),
-      contextConstraint: textOf(firstChild(ctxEl, 'CONSTRAINT')),
-      role: proseOf(firstChild(setupEl, 'ROLE')),
-      objective: proseOf(firstChild(setupEl, 'OBJECTIVE'))
+      contextInstruction: textOf(firstChildByTag(contextHandlingElement, 'INSTRUCTION')),
+      contextConstraint: textOf(firstChildByTag(contextHandlingElement, 'CONSTRAINT')),
+      role: proseOf(firstChildByTag(setupElement, 'ROLE')),
+      objective: proseOf(firstChildByTag(setupElement, 'OBJECTIVE'))
     }
   }
 }
@@ -208,70 +208,70 @@ export function blankGuideline() {
 }
 
 function stripFlowRef(value) {
-  const m = String(value || '').match(/^\$\{FLOW:([^}]+)\}$/)
-  return m ? m[1] : String(value || '')
+  const match = String(value || '').match(/^\$\{FLOW:([^}]+)\}$/)
+  return match ? match[1] : String(value || '')
 }
 
-function parseActionSteps(actionEl) {
-  return Array.from(actionEl.children).map((stepEl) => ({
-    id: nextId('as'),
-    kind: stepEl.tagName,
-    name: stepEl.tagName === 'INVOKE_FLOW' ? stripFlowRef(attr(stepEl, 'name')) : attr(stepEl, 'name'),
-    value: attr(stepEl, 'value')
+function parseActionSteps(actionElement) {
+  return Array.from(actionElement.children).map((stepElement) => ({
+    id: generateId('as'),
+    kind: stepElement.tagName,
+    name: stepElement.tagName === 'INVOKE_FLOW' ? stripFlowRef(attributeValue(stepElement, 'name')) : attributeValue(stepElement, 'name'),
+    value: attributeValue(stepElement, 'value')
   }))
 }
 
-function parseGuideline(policyEl) {
-  const base = { ...blankGuideline(), id: nextId('g'), policyId: attr(policyEl, 'id'), comment: prose(collectPrecedingComments(policyEl)) }
-  const kids = Array.from(policyEl.children)
-  if (kids.length === 0) {
-    return { ...base, shape: 'text', text: proseOf(policyEl) }
+function parseGuideline(policyElement) {
+  const baseGuideline = { ...blankGuideline(), id: generateId('g'), policyId: attributeValue(policyElement, 'id'), comment: prose(collectPrecedingComments(policyElement)) }
+  const policyChildren = Array.from(policyElement.children)
+  if (policyChildren.length === 0) {
+    return { ...baseGuideline, shape: 'text', text: proseOf(policyElement) }
   }
-  const actionEl = firstChild(policyEl, 'ACTION')
-  const actionKids = actionEl ? Array.from(actionEl.children) : []
-  const actionOk = !actionEl || actionKids.every((c) => ACTION_STEP_TAGS.has(c.tagName) && c.children.length === 0)
-  const uniqueTags = new Set(kids.map((c) => c.tagName))
-  const structured = actionOk && uniqueTags.size === kids.length && kids.every((c) => STRUCTURED_POLICY_TAGS.has(c.tagName))
-  if (structured) {
-    const actionIsSteps = actionKids.length > 0
+  const actionElement = firstChildByTag(policyElement, 'ACTION')
+  const actionChildren = actionElement ? Array.from(actionElement.children) : []
+  const actionIsStepListOrAbsent = !actionElement || actionChildren.every((childElement) => ACTION_STEP_TAGS.has(childElement.tagName) && childElement.children.length === 0)
+  const distinctTagNames = new Set(policyChildren.map((childElement) => childElement.tagName))
+  const isStructured = actionIsStepListOrAbsent && distinctTagNames.size === policyChildren.length && policyChildren.every((childElement) => STRUCTURED_POLICY_TAGS.has(childElement.tagName))
+  if (isStructured) {
+    const actionIsSteps = actionChildren.length > 0
     return {
-      ...base,
+      ...baseGuideline,
       shape: 'structured',
-      trigger: proseOf(firstChild(policyEl, 'TRIGGER')),
-      triggerKeywords: proseOf(firstChild(policyEl, 'TRIGGER_KEYWORDS')),
-      action: actionEl && !actionIsSteps ? proseOf(actionEl) : '',
-      actionSteps: actionIsSteps ? parseActionSteps(actionEl) : [],
-      requirement: proseOf(firstChild(policyEl, 'REQUIREMENT')),
-      format: proseOf(firstChild(policyEl, 'FORMAT'))
+      trigger: proseOf(firstChildByTag(policyElement, 'TRIGGER')),
+      triggerKeywords: proseOf(firstChildByTag(policyElement, 'TRIGGER_KEYWORDS')),
+      action: actionElement && !actionIsSteps ? proseOf(actionElement) : '',
+      actionSteps: actionIsSteps ? parseActionSteps(actionElement) : [],
+      requirement: proseOf(firstChildByTag(policyElement, 'REQUIREMENT')),
+      format: proseOf(firstChildByTag(policyElement, 'FORMAT'))
     }
   }
-  return { ...base, shape: 'raw', rawXml: serializeChildrenXml(policyEl) }
+  return { ...baseGuideline, shape: 'raw', rawXml: serializeChildrenXml(policyElement) }
 }
 
-function parseGuidelines(root) {
-  return children(firstChild(root, 'GUIDELINES'), 'POLICY').map(parseGuideline)
+function parseGuidelines(rootElement) {
+  return childElementsByTag(firstChildByTag(rootElement, 'GUIDELINES'), 'POLICY').map(parseGuideline)
 }
 
 // ---------------------------------------------------------------------
 // DIALOG_CONSTRAINTS
 // ---------------------------------------------------------------------
-function parseDialogConstraint(constraintEl) {
-  const type = attr(constraintEl, 'type')
-  const criticalEl = firstChild(constraintEl, 'CRITICAL')
-  if (criticalEl) {
+function parseDialogConstraint(constraintElement) {
+  const type = attributeValue(constraintElement, 'type')
+  const criticalElement = firstChildByTag(constraintElement, 'CRITICAL')
+  if (criticalElement) {
     return {
-      id: nextId('dc'),
+      id: generateId('dc'),
       type,
       text: '',
-      critical: textOf(criticalEl),
-      action: textOf(firstChild(constraintEl, 'ACTION'))
+      critical: textOf(criticalElement),
+      action: textOf(firstChildByTag(constraintElement, 'ACTION'))
     }
   }
-  return { id: nextId('dc'), type, text: textOf(constraintEl), critical: '', action: '' }
+  return { id: generateId('dc'), type, text: textOf(constraintElement), critical: '', action: '' }
 }
 
-function parseDialogConstraints(root) {
-  return children(firstChild(root, 'DIALOG_CONSTRAINTS'), 'CONSTRAINT').map(parseDialogConstraint)
+function parseDialogConstraints(rootElement) {
+  return childElementsByTag(firstChildByTag(rootElement, 'DIALOG_CONSTRAINTS'), 'CONSTRAINT').map(parseDialogConstraint)
 }
 
 // ---------------------------------------------------------------------
@@ -279,73 +279,73 @@ function parseDialogConstraints(root) {
 //  - <CLARIFICATION_RULES_POLICY><RULE condition="...">...</RULE>...</CLARIFICATION_RULES_POLICY>
 //  - <CLARIFICATION_RULES condition="..."><RULE keyword="...">...</RULE>...</CLARIFICATION_RULES>
 // ---------------------------------------------------------------------
-function parseClarificationRule(ruleEl) {
-  const hasKeyword = ruleEl.getAttribute && ruleEl.getAttribute('keyword') !== null
+function parseClarificationRule(ruleElement) {
+  const hasKeyword = ruleElement.getAttribute && ruleElement.getAttribute('keyword') !== null
   return {
-    id: nextId('cr'),
+    id: generateId('cr'),
     attrName: hasKeyword ? 'keyword' : 'condition',
-    condition: hasKeyword ? attr(ruleEl, 'keyword') : attr(ruleEl, 'condition'),
-    prompt: proseOf(firstChild(ruleEl, 'PROMPT')),
+    condition: hasKeyword ? attributeValue(ruleElement, 'keyword') : attributeValue(ruleElement, 'condition'),
+    prompt: proseOf(firstChildByTag(ruleElement, 'PROMPT')),
     // Optional per-rule routing/handling note seen alongside PROMPT in some
     // rules (e.g. "if unsure, route to the Generic Leaks playbook").
-    instruction: proseOf(firstChild(ruleEl, 'INSTRUCTION')),
-    comment: prose(collectPrecedingComments(ruleEl))
+    instruction: proseOf(firstChildByTag(ruleElement, 'INSTRUCTION')),
+    comment: prose(collectPrecedingComments(ruleElement))
   }
 }
 
-function parseClarificationRules(root) {
-  const wrapperRules = firstChild(root, 'CLARIFICATION_RULES') // triage-style outer wrapper
-  const wrapperPolicy = firstChild(root, 'CLARIFICATION_RULES_POLICY') // this app's own simple wrapper
-  const wrapper = wrapperRules || wrapperPolicy
-  if (!wrapper) {
+function parseClarificationRules(rootElement) {
+  const rulesWrapperElement = firstChildByTag(rootElement, 'CLARIFICATION_RULES') // triage-style outer wrapper
+  const policyWrapperElement = firstChildByTag(rootElement, 'CLARIFICATION_RULES_POLICY') // this app's own simple wrapper
+  const wrapperElement = rulesWrapperElement || policyWrapperElement
+  if (!wrapperElement) {
     return { clarificationRules: [], clarificationRulesCondition: '' }
   }
   return {
-    clarificationRules: children(wrapper, 'RULE').map(parseClarificationRule),
-    clarificationRulesCondition: wrapperRules ? attr(wrapperRules, 'condition') : ''
+    clarificationRules: childElementsByTag(wrapperElement, 'RULE').map(parseClarificationRule),
+    clarificationRulesCondition: rulesWrapperElement ? attributeValue(rulesWrapperElement, 'condition') : ''
   }
 }
 
 // ---------------------------------------------------------------------
 // ESCALATION_HANDLING
 // ---------------------------------------------------------------------
-function parseEscalation(escEl, playbookName) {
-  const actionEl = firstChild(escEl, 'ACTION')
+function parseEscalation(escalationElement, playbookName) {
+  const actionElement = firstChildByTag(escalationElement, 'ACTION')
   let escalationReason = ''
   let playbookNameParam = ''
   let flowName = ''
   let note = ''
-  if (actionEl) {
-    const createEl = firstChild(actionEl, 'create_json_data_object')
-    if (createEl) {
-      escalationReason = attr(createEl, 'param_escalation_reason')
+  if (actionElement) {
+    const createJsonElement = firstChildByTag(actionElement, 'create_json_data_object')
+    if (createJsonElement) {
+      escalationReason = attributeValue(createJsonElement, 'param_escalation_reason')
       // Blank means "use the playbook's own name" (what the exporter falls
       // back to), so renaming the playbook keeps escalations in step. Only
       // a value that differs from the playbook name is stored explicitly.
-      const pn = attr(createEl, 'param_playbook_name')
-      playbookNameParam = pn && pn !== playbookName ? pn : ''
+      const playbookNameValue = attributeValue(createJsonElement, 'param_playbook_name')
+      playbookNameParam = playbookNameValue && playbookNameValue !== playbookName ? playbookNameValue : ''
     }
-    const invokeEl = firstChild(actionEl, 'INVOKE_FLOW')
-    if (invokeEl) {
-      const nameAttr = attr(invokeEl, 'name')
-      const m = nameAttr.match(/\$\{FLOW:([^}]+)\}/)
-      flowName = m ? m[1] : nameAttr
+    const invokeElement = firstChildByTag(actionElement, 'INVOKE_FLOW')
+    if (invokeElement) {
+      const nameAttributeValue = attributeValue(invokeElement, 'name')
+      const flowMatch = nameAttributeValue.match(/\$\{FLOW:([^}]+)\}/)
+      flowName = flowMatch ? flowMatch[1] : nameAttributeValue
       // The exporter writes escalation notes as "<!-- Note: <text> -->";
       // strip that prefix back off to recover the original `note` field.
-      note = prose(collectPrecedingComments(invokeEl).replace(/^Note:\s*/, ''))
+      note = prose(collectPrecedingComments(invokeElement).replace(/^Note:\s*/, ''))
     }
   }
   // Seen with either attribute name in the wild ("condition" or "type") —
   // whichever is present is preserved via attrName so export round-trips it.
-  const hasType = escEl.getAttribute && escEl.getAttribute('type') !== null
+  const hasType = escalationElement.getAttribute && escalationElement.getAttribute('type') !== null
   return {
-    id: nextId('esc'),
+    id: generateId('esc'),
     attrName: hasType ? 'type' : 'condition',
-    condition: hasType ? attr(escEl, 'type') : attr(escEl, 'condition'),
+    condition: hasType ? attributeValue(escalationElement, 'type') : attributeValue(escalationElement, 'condition'),
     // e.g. "<!-- Gas Emergency -->" sitting directly above the <ESCALATION>
-    comment: prose(collectPrecedingComments(escEl)),
-    description: proseOf(firstChild(escEl, 'DESCRIPTION')),
-    trigger: proseOf(firstChild(escEl, 'TRIGGER')),
+    comment: prose(collectPrecedingComments(escalationElement)),
+    description: proseOf(firstChildByTag(escalationElement, 'DESCRIPTION')),
+    trigger: proseOf(firstChildByTag(escalationElement, 'TRIGGER')),
     escalationReason,
     playbookNameParam,
     flowName,
@@ -353,33 +353,33 @@ function parseEscalation(escEl, playbookName) {
   }
 }
 
-function parseEscalations(root, playbookName) {
-  return children(firstChild(root, 'ESCALATION_HANDLING'), 'ESCALATION').map((el) => parseEscalation(el, playbookName))
+function parseEscalations(rootElement, playbookName) {
+  return childElementsByTag(firstChildByTag(rootElement, 'ESCALATION_HANDLING'), 'ESCALATION').map((escalationElement) => parseEscalation(escalationElement, playbookName))
 }
 
 // Global (playbook-level) NoMatch/NoInput reprompt logic — modeled the same
 // way as a classification's <Action> (see parseClassificationAction below,
 // reused directly here) so tool_type/tool_id/Parameter are genuine,
 // independently editable fields rather than hardcoded boilerplate.
-function parseGlobalReprompt(handlerEl) {
-  const actionEl = firstChild(handlerEl, 'Action')
+function parseGlobalReprompt(handlerElement) {
+  const actionElement = firstChildByTag(handlerElement, 'Action')
   return {
-    comment: prose(collectPrecedingComments(handlerEl)),
-    prompt: proseOf(firstChild(handlerEl, 'PROMPT')),
-    action: actionEl ? parseClassificationAction(actionEl) : { toolType: '', toolId: '', flowId: '', parameterName: '', parameterValue: '' }
+    comment: prose(collectPrecedingComments(handlerElement)),
+    prompt: proseOf(firstChildByTag(handlerElement, 'PROMPT')),
+    action: actionElement ? parseClassificationAction(actionElement) : { toolType: '', toolId: '', flowId: '', parameterName: '', parameterValue: '' }
   }
 }
 
-function parseGlobalReprompts(root) {
-  const ehEl = firstChild(firstChild(root, 'ESCALATION_HANDLING'), 'EVENT_HANDLERS')
-  const noMatchEl = firstChild(ehEl, 'NO_MATCH')
-  const noInputEl = firstChild(ehEl, 'NO_INPUT')
+function parseGlobalReprompts(rootElement) {
+  const eventHandlersElement = firstChildByTag(firstChildByTag(rootElement, 'ESCALATION_HANDLING'), 'EVENT_HANDLERS')
+  const noMatchElement = firstChildByTag(eventHandlersElement, 'NO_MATCH')
+  const noInputElement = firstChildByTag(eventHandlersElement, 'NO_INPUT')
   return {
-    globalNoMatch: noMatchEl
-      ? parseGlobalReprompt(noMatchEl)
+    globalNoMatch: noMatchElement
+      ? parseGlobalReprompt(noMatchElement)
       : { prompt: '', action: { toolType: '', toolId: '', flowId: '', parameterName: '', parameterValue: '' } },
-    globalNoInput: noInputEl
-      ? parseGlobalReprompt(noInputEl)
+    globalNoInput: noInputElement
+      ? parseGlobalReprompt(noInputElement)
       : { prompt: '', action: { toolType: '', toolId: '', flowId: '', parameterName: '', parameterValue: '' } }
   }
 }
@@ -388,94 +388,94 @@ function parseGlobalReprompts(root) {
 // ROUTING_LOGIC — a router/triage playbook's equivalent of DIAGNOSTIC_FLOWS:
 // routes to other playbooks by name rather than asking its own questions.
 // ---------------------------------------------------------------------
-function parseRoutingCategory(catEl) {
+function parseRoutingCategory(categoryElement) {
   return {
-    id: nextId('rc'),
-    name: attr(catEl, 'name'),
-    comment: prose(collectPrecedingComments(catEl)),
-    triggers: proseOf(firstChild(catEl, 'TRIGGERS')),
-    action: proseOf(firstChild(catEl, 'ACTION'))
+    id: generateId('rc'),
+    name: attributeValue(categoryElement, 'name'),
+    comment: prose(collectPrecedingComments(categoryElement)),
+    triggers: proseOf(firstChildByTag(categoryElement, 'TRIGGERS')),
+    action: proseOf(firstChildByTag(categoryElement, 'ACTION'))
   }
 }
 
-function parseRoutingLogic(root) {
-  return children(firstChild(root, 'ROUTING_LOGIC'), 'CATEGORY').map(parseRoutingCategory)
+function parseRoutingLogic(rootElement) {
+  return childElementsByTag(firstChildByTag(rootElement, 'ROUTING_LOGIC'), 'CATEGORY').map(parseRoutingCategory)
 }
 
 // ---------------------------------------------------------------------
 // DIAGNOSTIC_FLOWS
 // ---------------------------------------------------------------------
-function parseClassificationAction(actionEl) {
-  const toolType = attr(actionEl, 'tool_type')
-  const toolId = attr(actionEl, 'tool_id')
-  const flowId = attr(actionEl, 'flow_id')
-  let parameterName = attr(actionEl, 'parameter_name')
-  let parameterValue = attr(actionEl, 'value')
-  const paramEl = firstChild(actionEl, 'Parameter')
-  if (paramEl) {
-    parameterName = attr(paramEl, 'name')
-    parameterValue = textOf(paramEl)
+function parseClassificationAction(actionElement) {
+  const toolType = attributeValue(actionElement, 'tool_type')
+  const toolId = attributeValue(actionElement, 'tool_id')
+  const flowId = attributeValue(actionElement, 'flow_id')
+  let parameterName = attributeValue(actionElement, 'parameter_name')
+  let parameterValue = attributeValue(actionElement, 'value')
+  const parameterElement = firstChildByTag(actionElement, 'Parameter')
+  if (parameterElement) {
+    parameterName = attributeValue(parameterElement, 'name')
+    parameterValue = textOf(parameterElement)
   }
-  return { id: nextId('a'), toolType, toolId, flowId, parameterName, parameterValue }
+  return { id: generateId('a'), toolType, toolId, flowId, parameterName, parameterValue }
 }
 
-function parseClassification(clsEl) {
-  const comment = collectPrecedingComments(clsEl)
+function parseClassification(classificationElement) {
+  const comment = collectPrecedingComments(classificationElement)
   let query = ''
   const actions = []
-  Array.from(clsEl.children).forEach((child) => {
-    if (child.tagName === 'Parameter' && attr(child, 'name') === 'query') {
-      query = textOf(child)
-    } else if (child.tagName === 'Action') {
-      actions.push(parseClassificationAction(child))
+  Array.from(classificationElement.children).forEach((childElement) => {
+    if (childElement.tagName === 'Parameter' && attributeValue(childElement, 'name') === 'query') {
+      query = textOf(childElement)
+    } else if (childElement.tagName === 'Action') {
+      actions.push(parseClassificationAction(childElement))
     }
   })
   return {
-    id: nextId('c'),
-    classificationId: attr(clsEl, 'ID'),
-    nextStep: attr(clsEl, 'next_step'),
-    triggerCondition: textOf(firstChild(clsEl, 'TriggerCondition')),
+    id: generateId('c'),
+    classificationId: attributeValue(classificationElement, 'ID'),
+    nextStep: attributeValue(classificationElement, 'next_step'),
+    triggerCondition: textOf(firstChildByTag(classificationElement, 'TriggerCondition')),
     query,
-    dialogResponse: textOf(firstChild(clsEl, 'DialogResponse')),
+    dialogResponse: textOf(firstChildByTag(classificationElement, 'DialogResponse')),
     comment,
     actions
   }
 }
 
-function parseEventHandlers(agentInteractionEl) {
-  const ehEl = firstChild(agentInteractionEl, 'EventHandlers')
+function parseEventHandlers(agentInteractionElement) {
+  const eventHandlersElement = firstChildByTag(agentInteractionElement, 'EventHandlers')
   return {
-    noMatchResponse: textOf(firstChild(firstChild(ehEl, 'NoMatch'), 'DialogResponse')),
-    noInputResponse: textOf(firstChild(firstChild(ehEl, 'NoInput'), 'DialogResponse'))
+    noMatchResponse: textOf(firstChildByTag(firstChildByTag(eventHandlersElement, 'NoMatch'), 'DialogResponse')),
+    noInputResponse: textOf(firstChildByTag(firstChildByTag(eventHandlersElement, 'NoInput'), 'DialogResponse'))
   }
 }
 
-function parseDialogStep(stepEl) {
-  const comment = collectPrecedingComments(stepEl)
-  const agentInteractionEl = firstChild(stepEl, 'AgentInteraction')
-  const promptEl = firstChild(agentInteractionEl, 'Prompt')
+function parseDialogStep(stepElement) {
+  const comment = collectPrecedingComments(stepElement)
+  const agentInteractionElement = firstChildByTag(stepElement, 'AgentInteraction')
+  const promptElement = firstChildByTag(agentInteractionElement, 'Prompt')
   // Normally a sibling of AgentInteraction, but tolerate it being nested
   // inside AgentInteraction too (seen in hand-edited source documents).
-  const instructionsEl =
-    firstChild(stepEl, 'DialogStepSpecificInstructions') || firstChild(agentInteractionEl, 'DialogStepSpecificInstructions')
-  const { noMatchResponse, noInputResponse } = parseEventHandlers(agentInteractionEl)
+  const instructionsElement =
+    firstChildByTag(stepElement, 'DialogStepSpecificInstructions') || firstChildByTag(agentInteractionElement, 'DialogStepSpecificInstructions')
+  const { noMatchResponse, noInputResponse } = parseEventHandlers(agentInteractionElement)
   return {
-    id: attr(stepEl, 'ID'),
-    topic: attr(stepEl, 'topic'),
-    issueSummary: textOf(firstChild(stepEl, 'IssueSummary')),
-    instructions: instructionsEl ? textOf(instructionsEl) : '',
+    id: attributeValue(stepElement, 'ID'),
+    topic: attributeValue(stepElement, 'topic'),
+    issueSummary: textOf(firstChildByTag(stepElement, 'IssueSummary')),
+    instructions: instructionsElement ? textOf(instructionsElement) : '',
     comment,
-    promptType: attr(promptEl, 'type') || 'InitialQuery',
-    promptComment: promptEl ? collectPrecedingComments(promptEl) : '',
-    prompt: textOf(promptEl),
+    promptType: attributeValue(promptElement, 'type') || 'InitialQuery',
+    promptComment: promptElement ? collectPrecedingComments(promptElement) : '',
+    prompt: textOf(promptElement),
     noMatchResponse,
     noInputResponse,
-    classifications: children(firstChild(stepEl, 'ExpectedClassifications'), 'Classification').map(parseClassification)
+    classifications: childElementsByTag(firstChildByTag(stepElement, 'ExpectedClassifications'), 'Classification').map(parseClassification)
   }
 }
 
 function parseSteps(flowsRoot) {
-  return children(flowsRoot, 'DIALOG_STEP').map(parseDialogStep)
+  return childElementsByTag(flowsRoot, 'DIALOG_STEP').map(parseDialogStep)
 }
 
 /**
@@ -488,19 +488,19 @@ function parseSteps(flowsRoot) {
  * @returns {{playbookName: string, setup: object, guidelines: Array, dialogConstraints: Array, clarificationRules: Array, escalations: Array, steps: Array}}
  */
 export function parsePlaybookXml(xmlText) {
-  const doc = new DOMParser().parseFromString(xmlText, 'application/xml')
-  const parserError = doc.querySelector('parsererror')
+  const xmlDocument = new DOMParser().parseFromString(xmlText, 'application/xml')
+  const parserError = xmlDocument.querySelector('parsererror')
   if (parserError) {
     throw new Error(`Not valid XML: ${parserError.textContent.trim().slice(0, 200)}`)
   }
-  const root = doc.documentElement
-  if (!root || (root.tagName !== 'LLM_INSTRUCTIONS' && root.tagName !== 'DIAGNOSTIC_FLOWS')) {
+  const rootElement = xmlDocument.documentElement
+  if (!rootElement || (rootElement.tagName !== 'LLM_INSTRUCTIONS' && rootElement.tagName !== 'DIAGNOSTIC_FLOWS')) {
     throw new Error('Expected a root <LLM_INSTRUCTIONS> (or bare <DIAGNOSTIC_FLOWS>) element.')
   }
 
   const includeXmlDeclaration = /^\s*(\uFEFF)?\s*<\?xml/.test(xmlText)
 
-  if (root.tagName === 'DIAGNOSTIC_FLOWS') {
+  if (rootElement.tagName === 'DIAGNOSTIC_FLOWS') {
     return {
       includeXmlDeclaration,
       sectionOrder: [],
@@ -515,29 +515,29 @@ export function parsePlaybookXml(xmlText) {
       globalNoMatch: { prompt: '', action: { toolType: '', toolId: '', flowId: '', parameterName: '', parameterValue: '' } },
       globalNoInput: { prompt: '', action: { toolType: '', toolId: '', flowId: '', parameterName: '', parameterValue: '' } },
       routingCategories: [],
-      steps: parseSteps(root)
+      steps: parseSteps(rootElement)
     }
   }
 
-  const { playbookName, setup } = parseSetup(root)
-  const { clarificationRules, clarificationRulesCondition } = parseClarificationRules(root)
-  const { globalNoMatch, globalNoInput } = parseGlobalReprompts(root)
-  const { sectionOrder, sectionComments } = parseDocumentLayout(root)
+  const { playbookName, setup } = parseSetup(rootElement)
+  const { clarificationRules, clarificationRulesCondition } = parseClarificationRules(rootElement)
+  const { globalNoMatch, globalNoInput } = parseGlobalReprompts(rootElement)
+  const { sectionOrder, sectionComments } = parseDocumentLayout(rootElement)
   return {
     playbookName,
     includeXmlDeclaration,
     sectionOrder,
     sectionComments,
     setup,
-    guidelines: parseGuidelines(root),
-    dialogConstraints: parseDialogConstraints(root),
+    guidelines: parseGuidelines(rootElement),
+    dialogConstraints: parseDialogConstraints(rootElement),
     clarificationRules,
     clarificationRulesCondition,
-    escalations: parseEscalations(root, playbookName),
+    escalations: parseEscalations(rootElement, playbookName),
     globalNoMatch,
     globalNoInput,
-    routingCategories: parseRoutingLogic(root),
-    steps: parseSteps(firstChild(root, 'DIAGNOSTIC_FLOWS'))
+    routingCategories: parseRoutingLogic(rootElement),
+    steps: parseSteps(firstChildByTag(rootElement, 'DIAGNOSTIC_FLOWS'))
   }
 }
 
@@ -554,13 +554,17 @@ export function parsePlaybookXml(xmlText) {
  */
 export function structurePolicyBody(rawXml) {
   try {
-    const doc = new DOMParser().parseFromString(`<POLICY>${rawXml || ''}</POLICY>`, 'application/xml')
-    if (doc.querySelector('parsererror')) return null
-    const parsed = parseGuideline(doc.documentElement)
-    if (parsed.shape !== 'structured') return null
-    const { id, policyId, comment, ...fields } = parsed
-    return { ...fields, rawXml: '' }
-  } catch (e) {
+    const xmlDocument = new DOMParser().parseFromString(`<POLICY>${rawXml || ''}</POLICY>`, 'application/xml')
+    if (xmlDocument.querySelector('parsererror')) return null
+    const parsedGuideline = parseGuideline(xmlDocument.documentElement)
+    if (parsedGuideline.shape !== 'structured') return null
+    // Keep every field except the ones that identify/annotate the policy itself.
+    const guidelineFields = { ...parsedGuideline }
+    delete guidelineFields.id
+    delete guidelineFields.policyId
+    delete guidelineFields.comment
+    return { ...guidelineFields, rawXml: '' }
+  } catch {
     return null
   }
 }

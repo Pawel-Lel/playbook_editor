@@ -57,8 +57,8 @@ function persistSession() {
     } else {
       sessionStorage.removeItem(SESSION_KEY)
     }
-  } catch (e) {
-    console.warn('Could not persist the Google session.', e)
+  } catch (error) {
+    console.warn('Could not persist the Google session.', error)
   }
 }
 
@@ -70,8 +70,8 @@ function persistSession() {
       tokenExpiresAt = saved.tokenExpiresAt || 0
       userEmail = saved.userEmail || ''
     }
-  } catch (e) {
-    console.warn('Could not restore the Google session.', e)
+  } catch (error) {
+    console.warn('Could not restore the Google session.', error)
   }
 })()
 
@@ -106,20 +106,20 @@ export async function requestAccessToken(clientId, { prompt = '' } = {}) {
   if (!clientId?.trim()) throw new Error('Missing Google OAuth Client ID.')
   await ensureTokenClient(clientId.trim())
   return new Promise((resolve, reject) => {
-    tokenClient.callback = (resp) => {
-      if (resp.error) {
-        reject(new Error(resp.error_description || resp.error))
+    tokenClient.callback = (tokenResponse) => {
+      if (tokenResponse.error) {
+        reject(new Error(tokenResponse.error_description || tokenResponse.error))
         return
       }
-      accessToken = resp.access_token
-      tokenExpiresAt = Date.now() + (resp.expires_in || 3600) * 1000
+      accessToken = tokenResponse.access_token
+      tokenExpiresAt = Date.now() + (tokenResponse.expires_in || 3600) * 1000
       persistSession()
       resolve(accessToken)
     }
     try {
       tokenClient.requestAccessToken({ prompt })
-    } catch (e) {
-      reject(e)
+    } catch (error) {
+      reject(error)
     }
   })
 }
@@ -159,10 +159,10 @@ export async function fetchUserEmail() {
   const token = getAccessToken()
   if (!token) return ''
   try {
-    const res = await fetch(USERINFO_URL, { headers: { Authorization: `Bearer ${token}` } })
-    if (res.ok) userEmail = (await res.json()).email || ''
-  } catch (e) {
-    console.warn('Could not read the signed-in account.', e)
+    const response = await fetch(USERINFO_URL, { headers: { Authorization: `Bearer ${token}` } })
+    if (response.ok) userEmail = (await response.json()).email || ''
+  } catch (error) {
+    console.warn('Could not read the signed-in account.', error)
   }
   persistSession()
   return userEmail
@@ -199,17 +199,17 @@ export async function listObjects(bucket, prefix = '', { delimiter = '' } = {}) 
   const results = []
   let pageToken = ''
   do {
-    const params = new URLSearchParams()
-    if (prefix) params.set('prefix', prefix)
-    if (delimiter) params.set('delimiter', delimiter)
-    if (pageToken) params.set('pageToken', pageToken)
-    const qs = params.toString()
-    const url = `${GCS_API}/b/${encodeURIComponent(bucket)}/o${qs ? `?${qs}` : ''}`
-    const res = await fetch(url, { headers: authHeaders() })
-    if (!res.ok) {
-      throw new Error(`Could not list objects in gs://${bucket}/${prefix} (${res.status} ${res.statusText}).`)
+    const queryParams = new URLSearchParams()
+    if (prefix) queryParams.set('prefix', prefix)
+    if (delimiter) queryParams.set('delimiter', delimiter)
+    if (pageToken) queryParams.set('pageToken', pageToken)
+    const queryString = queryParams.toString()
+    const url = `${GCS_API}/b/${encodeURIComponent(bucket)}/o${queryString ? `?${queryString}` : ''}`
+    const response = await fetch(url, { headers: authHeaders() })
+    if (!response.ok) {
+      throw new Error(`Could not list objects in gs://${bucket}/${prefix} (${response.status} ${response.statusText}).`)
     }
-    const data = await res.json()
+    const data = await response.json()
     results.push(...(data.items || []))
     pageToken = data.nextPageToken || ''
   } while (pageToken)
@@ -225,14 +225,14 @@ export async function listObjects(bucket, prefix = '', { delimiter = '' } = {}) 
  */
 export async function checkBucketAccess(bucket, prefix = '') {
   if (!bucket?.trim()) throw new Error('Missing bucket name.')
-  const params = new URLSearchParams({ maxResults: '1' })
-  if (prefix) params.set('prefix', prefix)
-  const res = await fetch(`${GCS_API}/b/${encodeURIComponent(bucket)}/o?${params}`, { headers: authHeaders() })
-  if (res.status === 401 || res.status === 403) {
+  const queryParams = new URLSearchParams({ maxResults: '1' })
+  if (prefix) queryParams.set('prefix', prefix)
+  const response = await fetch(`${GCS_API}/b/${encodeURIComponent(bucket)}/o?${queryParams}`, { headers: authHeaders() })
+  if (response.status === 401 || response.status === 403) {
     throw new Error(`This Google account doesn't have access to gs://${bucket}. Ask an administrator to grant it a Storage role on the bucket.`)
   }
-  if (!res.ok) {
-    throw new Error(`Could not check access to gs://${bucket} (${res.status} ${res.statusText}).`)
+  if (!response.ok) {
+    throw new Error(`Could not check access to gs://${bucket} (${response.status} ${response.statusText}).`)
   }
 }
 
@@ -245,12 +245,12 @@ export async function checkBucketAccess(bucket, prefix = '') {
 export async function readTextObject(bucket, objectPath) {
   if (!bucket?.trim() || !objectPath?.trim()) throw new Error('Missing bucket name or object path.')
   const url = `${GCS_API}/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectPath)}?alt=media`
-  const res = await fetch(url, { headers: authHeaders() })
-  if (res.status === 404) return null
-  if (!res.ok) {
-    throw new Error(`Could not read gs://${bucket}/${objectPath} (${res.status} ${res.statusText}).`)
+  const response = await fetch(url, { headers: authHeaders() })
+  if (response.status === 404) return null
+  if (!response.ok) {
+    throw new Error(`Could not read gs://${bucket}/${objectPath} (${response.status} ${response.statusText}).`)
   }
-  return res.text()
+  return response.text()
 }
 
 /**
@@ -266,7 +266,7 @@ export async function writeTextObject(bucket, objectPath, text, contentType = 'a
   const token = getAccessToken()
   if (!token) throw new Error('Not signed in to Google — connect first.')
   const url = `${GCS_UPLOAD}/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(objectPath)}`
-  const res = await fetch(url, {
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -274,11 +274,11 @@ export async function writeTextObject(bucket, objectPath, text, contentType = 'a
     },
     body: text
   })
-  if (!res.ok) {
-    const detail = await res.text().catch(() => '')
-    throw new Error(`Could not write gs://${bucket}/${objectPath} (${res.status} ${res.statusText}). ${detail}`.trim())
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`Could not write gs://${bucket}/${objectPath} (${response.status} ${response.statusText}). ${detail}`.trim())
   }
-  return res.json()
+  return response.json()
 }
 
 /**

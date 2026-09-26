@@ -1,4 +1,6 @@
 <script setup>
+// StepEditView — the "Edit step" page (/steps/:id). The router passes the
+// :id part of the URL in as the `id` prop (see `props: true` in the router).
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import StepForm from '../components/StepForm.vue'
@@ -6,36 +8,42 @@ import { useStepsStore } from '../store/steps.js'
 
 const props = defineProps({ id: { type: String, required: true } })
 const router = useRouter()
-const store = useStepsStore()
+const stepsStore = useStepsStore()
 const errorMessage = ref('')
 
-const step = computed(() => store.getStep(props.id))
+// The step being edited (null if no step has this id).
+const step = computed(() => stepsStore.getStep(props.id))
 
 // If the ID no longer exists (deleted elsewhere / bad link), bounce to list.
+// `immediate: true` makes the watcher also run once right away, not only
+// on the first change.
 watch(
   step,
-  (val) => {
-    if (!val) router.replace('/steps')
+  (currentStep) => {
+    if (!currentStep) router.replace('/steps')
   },
   { immediate: true }
 )
 
-const filteredTargets = computed(() =>
-  store.allReferencedTargets.value.filter((t) => t.id !== props.id)
+// "Next step" suggestions — every target except this step itself.
+const nextStepSuggestions = computed(() =>
+  stepsStore.allReferencedTargets.value.filter((target) => target.id !== props.id)
 )
 
-function handleSubmit(data) {
+// Called when StepForm emits 'submit'.
+function handleSubmit(submittedStep) {
   try {
-    const updated = store.updateStep(props.id, data)
-    router.push(`/steps/${encodeURIComponent(updated.id)}`)
-  } catch (e) {
-    errorMessage.value = e.message
+    const updatedStep = stepsStore.updateStep(props.id, submittedStep)
+    // The step ID may have been renamed, so follow it to its new URL.
+    router.push(`/steps/${encodeURIComponent(updatedStep.id)}`)
+  } catch (error) {
+    errorMessage.value = error.message
   }
 }
 
 function handleDelete() {
   if (confirm(`Delete step "${props.id}"? This cannot be undone.`)) {
-    store.deleteStep(props.id)
+    stepsStore.deleteStep(props.id)
     router.push('/steps')
   }
 }
@@ -53,8 +61,8 @@ function handleDelete() {
 
     <StepForm
       mode="edit"
-      :initial="step"
-      :all-targets="filteredTargets"
+      :initial-step="step"
+      :all-targets="nextStepSuggestions"
       :error-message="errorMessage"
       @submit="handleSubmit"
       @cancel="router.push('/steps')"

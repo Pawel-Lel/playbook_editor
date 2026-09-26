@@ -1,9 +1,16 @@
 <script setup>
+// ImportXmlModal — pop-up for pasting or uploading XML that replaces the
+// active playbook's content in place (new playbooks come from the
+// Playbooks page's "Open files…" instead). It doesn't import anything
+// itself: it emits 'imported' with the XML text and the parent does the rest.
+//
+// Vue concepts: defineProps (inputs from the parent), defineEmits (events
+// sent to the parent — listened to there as @imported / @close), ref().
 import { ref } from 'vue'
 
-const props = defineProps({
-  // Overwrites the currently active playbook's content in place — new
-  // playbooks come from the Playbooks page's "Open files…" instead.
+// Props are used directly in the template (activePlaybookName, errorMessage),
+// so the return value of defineProps isn't needed here.
+defineProps({
   activePlaybookName: { type: String, default: '' },
   // Set by the parent after a failed import attempt (e.g. invalid XML) —
   // shown alongside this modal's own "paste something first" validation.
@@ -11,23 +18,25 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'imported'])
 
-const xmlText = ref('')
-const fileName = ref('')
+const xmlText = ref('') // bound to the textarea with v-model
+const chosenFileName = ref('')
 const localError = ref('')
 
-function onFileChange(e) {
-  const file = e.target.files?.[0]
-  if (!file) return
-  fileName.value = file.name
+// Reads the chosen file into the textarea. FileReader works with
+// callbacks: onload runs once the file has been read.
+function onFileChange(event) {
+  const chosenFile = event.target.files?.[0]
+  if (!chosenFile) return
+  chosenFileName.value = chosenFile.name
   localError.value = ''
-  const reader = new FileReader()
-  reader.onload = () => {
-    xmlText.value = String(reader.result || '')
+  const fileReader = new FileReader()
+  fileReader.onload = () => {
+    xmlText.value = String(fileReader.result || '')
   }
-  reader.onerror = () => {
+  fileReader.onerror = () => {
     localError.value = 'Could not read that file.'
   }
-  reader.readAsText(file)
+  fileReader.readAsText(chosenFile)
 }
 
 function handleImport() {
@@ -39,8 +48,10 @@ function handleImport() {
   emit('imported', xmlText.value)
 }
 
-function onOverlayClick(e) {
-  if (e.target === e.currentTarget) emit('close')
+// Close when the dark backdrop itself is clicked (event.target), but not
+// when the click lands inside the dialog box.
+function onOverlayClick(event) {
+  if (event.target === event.currentTarget) emit('close')
 }
 </script>
 
@@ -68,7 +79,7 @@ function onOverlayClick(e) {
           Choose .xml file…
           <input type="file" accept=".xml,application/xml,text/xml" @change="onFileChange" />
         </label>
-        <span v-if="fileName" class="file-name mono">{{ fileName }}</span>
+        <span v-if="chosenFileName" class="file-name mono">{{ chosenFileName }}</span>
       </div>
 
       <textarea

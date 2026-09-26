@@ -1,14 +1,27 @@
+// Steps store: create/read/update/delete the dialog steps of the ACTIVE
+// playbook. It holds no data of its own — every function reads and writes
+// getActivePlaybookRecord().steps inside the main store (playbooks.js).
+//
+// Vue concept used here — computed(() => ...): a value derived from
+// reactive data that Vue keeps up to date automatically. Here `steps`
+// always points at the active playbook's step list, even after the person
+// switches to another playbook.
 import { computed } from 'vue'
 import { getActivePlaybookRecord } from './playbooks.js'
 
-let idCounter = Date.now()
-function newId(prefix) {
-  idCounter += 1
-  return `${prefix}${idCounter}`
+// Unique ids for new classifications/actions: a prefix plus a number that
+// only goes up (starting from the current time, so ids stay unique across
+// page reloads too).
+let lastGeneratedNumber = Date.now()
+function generateId(prefix) {
+  lastGeneratedNumber += 1
+  return `${prefix}${lastGeneratedNumber}`
 }
 
-function slugify(value) {
-  return value
+// "Boiler not working?" → "Boiler_not_working" — step ids may only contain
+// letters, digits, underscores and square brackets.
+function toStepId(text) {
+  return text
     .trim()
     .replace(/[^a-zA-Z0-9_[\]]+/g, '_')
     .replace(/^_+|_+$/g, '')
@@ -18,49 +31,51 @@ function slugify(value) {
 // say what such a target is, so infer it from naming conventions: a
 // "[BRACKETED]" id is a runtime placeholder, an "..._Escalation" id hands
 // off to an escalation flow; anything else is flagged as unresolved.
-function externalTarget(id) {
-  if (/^\[.*\]$/.test(id)) return { id, kind: 'dynamic', label: `${id} (runtime placeholder)` }
-  if (/escalation/i.test(id)) return { id, kind: 'flow', label: `${id} (flow)` }
-  return { id, kind: 'unknown', label: id }
+function externalTarget(targetId) {
+  if (/^\[.*\]$/.test(targetId)) return { id: targetId, kind: 'dynamic', label: `${targetId} (runtime placeholder)` }
+  if (/escalation/i.test(targetId)) return { id: targetId, kind: 'flow', label: `${targetId} (flow)` }
+  return { id: targetId, kind: 'unknown', label: targetId }
 }
 
-function normalizeAction(a) {
+// The normalize... functions fill in every missing field with a default,
+// so the rest of the app can rely on each field existing.
+function normalizeAction(action) {
   return {
-    id: a.id || newId('a'),
-    toolType: a.toolType || '',
-    toolId: a.toolId || '',
-    flowId: a.flowId || '',
-    parameterName: a.parameterName || '',
-    parameterValue: a.parameterValue || ''
+    id: action.id || generateId('a'),
+    toolType: action.toolType || '',
+    toolId: action.toolId || '',
+    flowId: action.flowId || '',
+    parameterName: action.parameterName || '',
+    parameterValue: action.parameterValue || ''
   }
 }
 
-function normalizeClassification(c) {
+function normalizeClassification(classification) {
   return {
-    id: c.id || newId('c'),
-    classificationId: c.classificationId || '',
-    nextStep: c.nextStep || '',
-    triggerCondition: c.triggerCondition || '',
-    query: c.query || '',
-    dialogResponse: c.dialogResponse || '',
-    comment: c.comment || '',
-    actions: (c.actions || []).map(normalizeAction)
+    id: classification.id || generateId('c'),
+    classificationId: classification.classificationId || '',
+    nextStep: classification.nextStep || '',
+    triggerCondition: classification.triggerCondition || '',
+    query: classification.query || '',
+    dialogResponse: classification.dialogResponse || '',
+    comment: classification.comment || '',
+    actions: (classification.actions || []).map(normalizeAction)
   }
 }
 
-function normalizeStep(id, payload) {
+function normalizeStep(stepId, formData) {
   return {
-    id,
-    topic: payload.topic || '',
-    issueSummary: payload.issueSummary || '',
-    instructions: payload.instructions || '',
-    comment: payload.comment || '',
-    promptType: payload.promptType || 'InitialQuery',
-    promptComment: payload.promptComment || '',
-    prompt: payload.prompt || '',
-    noMatchResponse: payload.noMatchResponse || '',
-    noInputResponse: payload.noInputResponse || '',
-    classifications: (payload.classifications || []).map(normalizeClassification)
+    id: stepId,
+    topic: formData.topic || '',
+    issueSummary: formData.issueSummary || '',
+    instructions: formData.instructions || '',
+    comment: formData.comment || '',
+    promptType: formData.promptType || 'InitialQuery',
+    promptComment: formData.promptComment || '',
+    prompt: formData.prompt || '',
+    noMatchResponse: formData.noMatchResponse || '',
+    noInputResponse: formData.noInputResponse || '',
+    classifications: (formData.classifications || []).map(normalizeClassification)
   }
 }
 
@@ -71,53 +86,55 @@ function normalizeStep(id, payload) {
 export function useStepsStore() {
   const steps = computed(() => getActivePlaybookRecord().steps)
 
-  const stepIds = computed(() => steps.value.map((s) => s.id))
+  const stepIds = computed(() => steps.value.map((step) => step.id))
 
-  function getStep(id) {
-    return steps.value.find((s) => s.id === id) || null
+  function getStep(stepId) {
+    return steps.value.find((step) => step.id === stepId) || null
   }
 
-  function idExists(id) {
-    return steps.value.some((s) => s.id === id)
+  function idExists(stepId) {
+    return steps.value.some((step) => step.id === stepId)
   }
 
-  function createStep(payload) {
-    const id = slugify(payload.id || payload.topic || 'New_Step')
-    if (!id) throw new Error('A step ID is required.')
-    if (idExists(id)) throw new Error(`A step with ID "${id}" already exists.`)
-    const step = normalizeStep(id, payload)
-    steps.value.push(step)
-    return step
+  // formData is what StepForm.vue submits: every field of the step.
+  function createStep(formData) {
+    const newStepId = toStepId(formData.id || formData.topic || 'New_Step')
+    if (!newStepId) throw new Error('A step ID is required.')
+    if (idExists(newStepId)) throw new Error(`A step with ID "${newStepId}" already exists.`)
+    const newStep = normalizeStep(newStepId, formData)
+    steps.value.push(newStep)
+    return newStep
   }
 
-  function updateStep(originalId, payload) {
-    const idx = steps.value.findIndex((s) => s.id === originalId)
-    if (idx === -1) throw new Error(`Step "${originalId}" not found.`)
-    const newId = slugify(payload.id || originalId)
-    if (!newId) throw new Error('A step ID is required.')
-    if (newId !== originalId && idExists(newId)) {
-      throw new Error(`A step with ID "${newId}" already exists.`)
+  function updateStep(originalStepId, formData) {
+    const stepIndex = steps.value.findIndex((step) => step.id === originalStepId)
+    if (stepIndex === -1) throw new Error(`Step "${originalStepId}" not found.`)
+    const newStepId = toStepId(formData.id || originalStepId)
+    if (!newStepId) throw new Error('A step ID is required.')
+    if (newStepId !== originalStepId && idExists(newStepId)) {
+      throw new Error(`A step with ID "${newStepId}" already exists.`)
     }
 
-    const updated = normalizeStep(newId, payload)
-    steps.value.splice(idx, 1, updated)
+    // splice(index, 1, newItem) replaces one array element in place.
+    const updatedStep = normalizeStep(newStepId, formData)
+    steps.value.splice(stepIndex, 1, updatedStep)
 
     // Keep referential integrity: if the ID changed, repoint any classification
     // elsewhere in the flow that targeted the old ID.
-    if (newId !== originalId) {
-      steps.value.forEach((s) => {
-        s.classifications.forEach((c) => {
-          if (c.nextStep === originalId) c.nextStep = newId
+    if (newStepId !== originalStepId) {
+      steps.value.forEach((step) => {
+        step.classifications.forEach((classification) => {
+          if (classification.nextStep === originalStepId) classification.nextStep = newStepId
         })
       })
     }
-    return updated
+    return updatedStep
   }
 
-  function deleteStep(id) {
-    const idx = steps.value.findIndex((s) => s.id === id)
-    if (idx === -1) return
-    steps.value.splice(idx, 1)
+  function deleteStep(stepId) {
+    const stepIndex = steps.value.findIndex((step) => step.id === stepId)
+    if (stepIndex === -1) return
+    steps.value.splice(stepIndex, 1)
   }
 
   function clearSteps() {
@@ -128,18 +145,18 @@ export function useStepsStore() {
   // has its own DIALOG_STEP record — used to render the relationship map and
   // to populate "next step" pickers with valid escalation/terminal targets.
   const allReferencedTargets = computed(() => {
-    const targets = new Map()
-    steps.value.forEach((s) => {
-      targets.set(s.id, { id: s.id, kind: 'step', label: s.topic || s.id })
+    const targetsById = new Map()
+    steps.value.forEach((step) => {
+      targetsById.set(step.id, { id: step.id, kind: 'step', label: step.topic || step.id })
     })
-    steps.value.forEach((s) => {
-      s.classifications.forEach((c) => {
-        if (c.nextStep && !targets.has(c.nextStep)) {
-          targets.set(c.nextStep, externalTarget(c.nextStep))
+    steps.value.forEach((step) => {
+      step.classifications.forEach((classification) => {
+        if (classification.nextStep && !targetsById.has(classification.nextStep)) {
+          targetsById.set(classification.nextStep, externalTarget(classification.nextStep))
         }
       })
     })
-    return Array.from(targets.values())
+    return Array.from(targetsById.values())
   })
 
   return {

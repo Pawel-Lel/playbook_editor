@@ -1,4 +1,19 @@
 <script setup>
+// PlaybookSettingsView — the "Playbook Editor" page (/playbook): every
+// setting of the active playbook outside its dialog steps. It shows one of
+// two layouts depending on the playbook's shape (router/triage or
+// diagnostic-flow — see isRoutingPlaybook).
+//
+// Vue concepts used in this file:
+//  - ref() / computed(): reactive values (see FlowMapView.vue for details).
+//  - v-model on store data: inputs below write straight into the active
+//    playbook through the store, so there's no Save button — every
+//    keystroke is saved (playbooks.js stores it in localStorage).
+//  - Child components (GuidelinesEditor, ItemToolbar, ...) receive data via
+//    props (:index="...") and report clicks via events (@up="...").
+//  - Slots: content placed between <EscalationsEditor> and
+//    </EscalationsEditor> is shown inside that component, where its
+//    <slot /> tag is.
 import { ref, computed } from 'vue'
 import { usePlaybookStore } from '../store/playbook.js'
 import { useStepsStore } from '../store/steps.js'
@@ -11,52 +26,58 @@ import EscalationsEditor from '../components/EscalationsEditor.vue'
 import DocumentLayoutEditor from '../components/DocumentLayoutEditor.vue'
 import ItemToolbar from '../components/ItemToolbar.vue'
 
-const playbook = usePlaybookStore()
+const playbookStore = usePlaybookStore()
 const stepsStore = useStepsStore()
 const playbooksStore = usePlaybooksStore()
-const showExport = ref(false)
-const showImport = ref(false)
+const isExportModalOpen = ref(false)
+const isImportModalOpen = ref(false)
 const importError = ref('')
 
 // A router/triage-style playbook routes to other playbooks by category
 // instead of asking its own diagnostic questions, so it has no dialog steps
 // of its own — same detection FlowMapView uses to switch its graph.
 const isRoutingPlaybook = computed(
-  () => stepsStore.steps.value.length === 0 && playbook.routingCategories.value.length > 0
+  () => stepsStore.steps.value.length === 0 && playbookStore.routingCategories.value.length > 0
 )
 
-const exportedXml = computed(() => buildLlmInstructionsXml(playbook.toExportPayload(), stepsStore.steps.value))
+const exportedXml = computed(() => buildLlmInstructionsXml(playbookStore.toExportPayload(), stepsStore.steps.value))
 
-// The two playbook-level reprompts share one editor block.
+// The two playbook-level reprompts share one editor block (rendered with
+// v-for below). `data` is the actual reprompt object in the store, so
+// v-model on its fields edits the playbook directly.
 const reprompts = computed(() => [
-  { key: 'noMatch', label: 'No-match', tag: 'NO_MATCH', data: playbook.globalNoMatch.value },
-  { key: 'noInput', label: 'No-input', tag: 'NO_INPUT', data: playbook.globalNoInput.value }
+  { key: 'noMatch', label: 'No-match', tag: 'NO_MATCH', data: playbookStore.globalNoMatch.value },
+  { key: 'noInput', label: 'No-input', tag: 'NO_INPUT', data: playbookStore.globalNoInput.value }
 ])
 const DEFAULT_REPROMPT_COMMENTS = {
   noMatch: "Reprompt for when the user's input is not understood (No Match)",
   noInput: 'Reprompt for when the user provides no input (No Input)'
 }
-function repromptComment(r) {
-  return r.data.comment === undefined || r.data.comment === null ? DEFAULT_REPROMPT_COMMENTS[r.key] : r.data.comment
+// The reprompt's own comment, or the default one if it has never been set.
+function repromptComment(reprompt) {
+  return reprompt.data.comment === undefined || reprompt.data.comment === null
+    ? DEFAULT_REPROMPT_COMMENTS[reprompt.key]
+    : reprompt.data.comment
 }
 
 function clearPlaybookSettings() {
   if (confirm("Clear this playbook's settings? This cannot be undone.")) {
-    playbook.clearSettings()
+    playbookStore.clearSettings()
   }
 }
 
-function openImport() {
+function openImportModal() {
   importError.value = ''
-  showImport.value = true
+  isImportModalOpen.value = true
 }
 
+// Called when ImportXmlModal emits 'imported' with the XML text.
 function handleImportedXml(xmlText) {
   try {
     playbooksStore.replaceActivePlaybookFromXml(xmlText)
-    showImport.value = false
-  } catch (e) {
-    importError.value = e.message
+    isImportModalOpen.value = false
+  } catch (error) {
+    importError.value = error.message
   }
 }
 </script>
@@ -81,8 +102,8 @@ function handleImportedXml(xmlText) {
       </div>
       <div class="page-head__actions">
         <button class="btn btn-secondary" @click="clearPlaybookSettings">Clear settings</button>
-        <button class="btn btn-secondary" @click="openImport">Import XML…</button>
-        <button class="btn btn-secondary" @click="showExport = true">Export XML</button>
+        <button class="btn btn-secondary" @click="openImportModal">Import XML…</button>
+        <button class="btn btn-secondary" @click="isExportModalOpen = true">Export XML</button>
       </div>
     </div>
 
@@ -90,7 +111,7 @@ function handleImportedXml(xmlText) {
       <h3>Playbook</h3>
       <div class="field">
         <label for="playbookName">Playbook name</label>
-        <input id="playbookName" v-model="playbook.playbookName.value" type="text" placeholder="e.g. Heating and Hot Water" />
+        <input id="playbookName" v-model="playbookStore.playbookName.value" type="text" placeholder="e.g. Heating and Hot Water" />
         <p class="hint">Maps to &lt;PARAMETER_ASSIGNMENT name="param_playbook_name" value="…" /&gt; in SETUP.</p>
       </div>
     </section>
@@ -101,13 +122,13 @@ function handleImportedXml(xmlText) {
         <h3>Setup &middot; role &amp; objective</h3>
         <div class="field">
           <label for="role">Role</label>
-          <input id="role" v-model="playbook.setup.value.role" type="text" placeholder="e.g. Triage Engineer" />
+          <input id="role" v-model="playbookStore.setup.value.role" type="text" placeholder="e.g. Triage Engineer" />
         </div>
         <div class="field">
           <label for="objective">Objective</label>
           <textarea
             id="objective"
-            v-model="playbook.setup.value.objective"
+            v-model="playbookStore.setup.value.objective"
             rows="4"
             placeholder="What this playbook is trying to accomplish, and when to escalate instead of guessing"
           ></textarea>
@@ -122,39 +143,42 @@ function handleImportedXml(xmlText) {
           <span class="optional">(playbook-level, instead of per-step — shown to the caller once before escalating)</span>
         </h4>
         <div class="grid-2">
-          <div v-for="r in reprompts" :key="r.key" class="reprompt-col">
-            <p class="mono reprompt-tag">&lt;{{ r.tag }}&gt;</p>
+          <div v-for="reprompt in reprompts" :key="reprompt.key" class="reprompt-col">
+            <p class="mono reprompt-tag">&lt;{{ reprompt.tag }}&gt;</p>
             <div class="field">
-              <label>Comment <span class="optional">(above &lt;{{ r.tag }}&gt;)</span></label>
-              <input :value="repromptComment(r)" type="text" @input="r.data.comment = $event.target.value" />
+              <label>Comment <span class="optional">(above &lt;{{ reprompt.tag }}&gt;)</span></label>
+              <!-- Not v-model: the box shows the default comment until one is typed,
+                   so it reads through repromptComment() and writes on each keystroke
+                   ($event is the browser's input event). -->
+              <input :value="repromptComment(reprompt)" type="text" @input="reprompt.data.comment = $event.target.value" />
             </div>
             <div class="field">
-              <label>{{ r.label }} prompt</label>
-              <textarea v-model="r.data.prompt" rows="3" placeholder="Sorry, I didn't catch a response there, ..."></textarea>
+              <label>{{ reprompt.label }} prompt</label>
+              <textarea v-model="reprompt.data.prompt" rows="3" placeholder="Sorry, I didn't catch a response there, ..."></textarea>
             </div>
             <div class="grid-2">
               <div class="field">
                 <label>Tool type</label>
-                <input v-model="r.data.action.toolType" type="text" placeholder="e.g. Tool_Invocation" />
+                <input v-model="reprompt.data.action.toolType" type="text" placeholder="e.g. Tool_Invocation" />
               </div>
               <div class="field">
                 <label>Tool ID <span class="optional">(opt.)</span></label>
-                <input v-model="r.data.action.toolId" type="text" placeholder="e.g. external_memory_redis" />
+                <input v-model="reprompt.data.action.toolId" type="text" placeholder="e.g. external_memory_redis" />
               </div>
             </div>
             <div class="grid-2">
               <div class="field">
                 <label>Parameter name <span class="optional">(opt.)</span></label>
-                <input v-model="r.data.action.parameterName" type="text" placeholder="e.g. session_id" />
+                <input v-model="reprompt.data.action.parameterName" type="text" placeholder="e.g. session_id" />
               </div>
               <div class="field">
                 <label>Parameter value <span class="optional">(opt.)</span></label>
-                <input v-model="r.data.action.parameterValue" type="text" placeholder="e.g. state[&quot;$session_id&quot;]" />
+                <input v-model="reprompt.data.action.parameterValue" type="text" placeholder="e.g. state[&quot;$session_id&quot;]" />
               </div>
             </div>
-            <div v-if="r.data.action.toolType === 'Flow_Invocation'" class="field">
+            <div v-if="reprompt.data.action.toolType === 'Flow_Invocation'" class="field">
               <label>Flow ID</label>
-              <input v-model="r.data.action.flowId" type="text" placeholder="e.g. Default_Escalation_Triage" />
+              <input v-model="reprompt.data.action.flowId" type="text" placeholder="e.g. Default_Escalation_Triage" />
             </div>
           </div>
         </div>
@@ -162,83 +186,83 @@ function handleImportedXml(xmlText) {
 
       <section class="panel form-section">
         <div class="section-header">
-          <h3>Clarification rules <span class="count mono">{{ playbook.clarificationRules.value.length }}</span></h3>
-          <button type="button" class="btn btn-secondary" @click="playbook.addItem('clarificationRules', { attrName: 'keyword' })">+ Add rule</button>
+          <h3>Clarification rules <span class="count mono">{{ playbookStore.clarificationRules.value.length }}</span></h3>
+          <button type="button" class="btn btn-secondary" @click="playbookStore.addItem('clarificationRules', { attrName: 'keyword' })">+ Add rule</button>
         </div>
         <div class="field">
           <label>Shared condition <span class="optional">(the &lt;CLARIFICATION_RULES condition="..."&gt; wrapper's own attribute)</span></label>
           <input
-            v-model="playbook.clarificationRulesCondition.value"
+            v-model="playbookStore.clarificationRulesCondition.value"
             type="text"
             placeholder="e.g. user_response_is_unclear OR lacks_specific_details"
           />
         </div>
-        <div v-for="(r, idx) in playbook.clarificationRules.value" :key="r.id" class="item-row">
+        <div v-for="(rule, ruleIndex) in playbookStore.clarificationRules.value" :key="rule.id" class="item-row">
           <ItemToolbar
-            :index="idx"
-            :total="playbook.clarificationRules.value.length"
-            :label="r.condition"
-            @up="playbook.moveItem('clarificationRules', r.id, -1)"
-            @down="playbook.moveItem('clarificationRules', r.id, 1)"
-            @remove="playbook.removeItem('clarificationRules', r.id)"
+            :index="ruleIndex"
+            :total="playbookStore.clarificationRules.value.length"
+            :label="rule.condition"
+            @up="playbookStore.moveItem('clarificationRules', rule.id, -1)"
+            @down="playbookStore.moveItem('clarificationRules', rule.id, 1)"
+            @remove="playbookStore.removeItem('clarificationRules', rule.id)"
           />
           <div class="grid-rule">
             <div class="field">
               <label>Match on</label>
-              <select v-model="r.attrName">
+              <select v-model="rule.attrName">
                 <option value="keyword">keyword</option>
                 <option value="condition">condition</option>
               </select>
             </div>
             <div class="field">
               <label>Value</label>
-              <input v-model="r.condition" type="text" placeholder="e.g. Shower, shower issue" />
+              <input v-model="rule.condition" type="text" placeholder="e.g. Shower, shower issue" />
             </div>
           </div>
           <div class="field">
             <label>Prompt</label>
-            <textarea v-model="r.prompt" rows="2" placeholder="Clarification prompt text"></textarea>
+            <textarea v-model="rule.prompt" rows="2" placeholder="Clarification prompt text"></textarea>
           </div>
           <div class="field">
             <label>Routing instruction <span class="optional">(optional &lt;INSTRUCTION&gt; — e.g. "if unsure, route to the Generic Leaks playbook")</span></label>
-            <textarea v-model="r.instruction" rows="2" placeholder="Extra handling guidance for this rule, beyond just the prompt"></textarea>
+            <textarea v-model="rule.instruction" rows="2" placeholder="Extra handling guidance for this rule, beyond just the prompt"></textarea>
           </div>
           <div class="field">
             <label>Comment <span class="optional">(optional — exported as &lt;!-- ... --&gt; above this RULE)</span></label>
-            <input v-model="r.comment" type="text" />
+            <input v-model="rule.comment" type="text" />
           </div>
         </div>
       </section>
 
       <section class="panel form-section">
         <div class="section-header">
-          <h3>Routing logic <span class="count mono">{{ playbook.routingCategories.value.length }}</span></h3>
-          <button type="button" class="btn btn-secondary" @click="playbook.addItem('routingCategories')">+ Add category</button>
+          <h3>Routing logic <span class="count mono">{{ playbookStore.routingCategories.value.length }}</span></h3>
+          <button type="button" class="btn btn-secondary" @click="playbookStore.addItem('routingCategories')">+ Add category</button>
         </div>
-        <div v-for="(c, idx) in playbook.routingCategories.value" :key="c.id" class="item-row">
+        <div v-for="(category, categoryIndex) in playbookStore.routingCategories.value" :key="category.id" class="item-row">
           <ItemToolbar
-            :index="idx"
-            :total="playbook.routingCategories.value.length"
-            :label="c.name"
-            @up="playbook.moveItem('routingCategories', c.id, -1)"
-            @down="playbook.moveItem('routingCategories', c.id, 1)"
-            @remove="playbook.removeItem('routingCategories', c.id)"
+            :index="categoryIndex"
+            :total="playbookStore.routingCategories.value.length"
+            :label="category.name"
+            @up="playbookStore.moveItem('routingCategories', category.id, -1)"
+            @down="playbookStore.moveItem('routingCategories', category.id, 1)"
+            @remove="playbookStore.removeItem('routingCategories', category.id)"
           />
           <div class="field">
             <label>Category name</label>
-            <input v-model="c.name" type="text" placeholder="e.g. Shower Issues (Non-Blockage)" />
+            <input v-model="category.name" type="text" placeholder="e.g. Shower Issues (Non-Blockage)" />
           </div>
           <div class="field">
             <label>Trigger phrases</label>
-            <textarea v-model="c.triggers" rows="3" placeholder="Comma-separated phrases that route to this category"></textarea>
+            <textarea v-model="category.triggers" rows="3" placeholder="Comma-separated phrases that route to this category"></textarea>
           </div>
           <div class="field">
             <label>Action</label>
-            <input v-model="c.action" type="text" placeholder="e.g. Route to ${PLAYBOOK:Shower Issues}" />
+            <input v-model="category.action" type="text" placeholder="e.g. Route to ${PLAYBOOK:Shower Issues}" />
           </div>
           <div class="field">
             <label>Comment <span class="optional">(optional — exported as &lt;!-- ... --&gt; above this CATEGORY)</span></label>
-            <input v-model="c.comment" type="text" />
+            <input v-model="category.comment" type="text" />
           </div>
         </div>
       </section>
@@ -252,7 +276,7 @@ function handleImportedXml(xmlText) {
           <label for="ctxInstruction">Instruction</label>
           <textarea
             id="ctxInstruction"
-            v-model="playbook.setup.value.contextInstruction"
+            v-model="playbookStore.setup.value.contextInstruction"
             rows="3"
             placeholder="How to use the parent playbook / preceding conversation summary"
           ></textarea>
@@ -261,7 +285,7 @@ function handleImportedXml(xmlText) {
           <label for="ctxConstraint">Constraint</label>
           <textarea
             id="ctxConstraint"
-            v-model="playbook.setup.value.contextConstraint"
+            v-model="playbookStore.setup.value.contextConstraint"
             rows="2"
             placeholder="e.g. Avoid redundancy..."
           ></textarea>
@@ -273,33 +297,33 @@ function handleImportedXml(xmlText) {
       <section class="panel form-section">
         <div class="section-header">
           <h3>Dialog constraints</h3>
-          <button type="button" class="btn btn-secondary" @click="playbook.addItem('dialogConstraints')">+ Add constraint</button>
+          <button type="button" class="btn btn-secondary" @click="playbookStore.addItem('dialogConstraints')">+ Add constraint</button>
         </div>
-        <div v-for="(c, idx) in playbook.dialogConstraints.value" :key="c.id" class="item-row">
+        <div v-for="(constraint, constraintIndex) in playbookStore.dialogConstraints.value" :key="constraint.id" class="item-row">
           <ItemToolbar
-            :index="idx"
-            :total="playbook.dialogConstraints.value.length"
-            :label="c.type"
-            @up="playbook.moveItem('dialogConstraints', c.id, -1)"
-            @down="playbook.moveItem('dialogConstraints', c.id, 1)"
-            @remove="playbook.removeItem('dialogConstraints', c.id)"
+            :index="constraintIndex"
+            :total="playbookStore.dialogConstraints.value.length"
+            :label="constraint.type"
+            @up="playbookStore.moveItem('dialogConstraints', constraint.id, -1)"
+            @down="playbookStore.moveItem('dialogConstraints', constraint.id, 1)"
+            @remove="playbookStore.removeItem('dialogConstraints', constraint.id)"
           />
           <div class="field">
             <label>Type</label>
-            <input v-model="c.type" type="text" placeholder="e.g. SingleQuestion" />
+            <input v-model="constraint.type" type="text" placeholder="e.g. SingleQuestion" />
           </div>
           <div class="field">
             <label>Text <span class="optional">(for a simple constraint)</span></label>
-            <textarea v-model="c.text" rows="2" placeholder="e.g. You can only ask one question at a time."></textarea>
+            <textarea v-model="constraint.text" rows="2" placeholder="e.g. You can only ask one question at a time."></textarea>
           </div>
           <div class="grid-2">
             <div class="field">
               <label>Critical <span class="optional">(for a critical/action constraint)</span></label>
-              <input v-model="c.critical" type="text" placeholder="e.g. Do not invent questions." />
+              <input v-model="constraint.critical" type="text" placeholder="e.g. Do not invent questions." />
             </div>
             <div class="field">
               <label>Action</label>
-              <input v-model="c.action" type="text" placeholder="e.g. Vague inputs must be handled by..." />
+              <input v-model="constraint.action" type="text" placeholder="e.g. Vague inputs must be handled by..." />
             </div>
           </div>
         </div>
@@ -308,24 +332,24 @@ function handleImportedXml(xmlText) {
       <section class="panel form-section">
         <div class="section-header">
           <h3>Clarification rules</h3>
-          <button type="button" class="btn btn-secondary" @click="playbook.addItem('clarificationRules')">+ Add rule</button>
+          <button type="button" class="btn btn-secondary" @click="playbookStore.addItem('clarificationRules')">+ Add rule</button>
         </div>
-        <div v-for="(r, idx) in playbook.clarificationRules.value" :key="r.id" class="item-row">
+        <div v-for="(rule, ruleIndex) in playbookStore.clarificationRules.value" :key="rule.id" class="item-row">
           <ItemToolbar
-            :index="idx"
-            :total="playbook.clarificationRules.value.length"
-            @up="playbook.moveItem('clarificationRules', r.id, -1)"
-            @down="playbook.moveItem('clarificationRules', r.id, 1)"
-            @remove="playbook.removeItem('clarificationRules', r.id)"
+            :index="ruleIndex"
+            :total="playbookStore.clarificationRules.value.length"
+            @up="playbookStore.moveItem('clarificationRules', rule.id, -1)"
+            @down="playbookStore.moveItem('clarificationRules', rule.id, 1)"
+            @remove="playbookStore.removeItem('clarificationRules', rule.id)"
           />
           <div class="grid-2">
             <div class="field">
               <label>Condition <span class="optional">(optional)</span></label>
-              <input v-model="r.condition" type="text" placeholder="Condition this rule applies under" />
+              <input v-model="rule.condition" type="text" placeholder="Condition this rule applies under" />
             </div>
             <div class="field">
               <label>Prompt</label>
-              <input v-model="r.prompt" type="text" placeholder="Clarification prompt text" />
+              <input v-model="rule.prompt" type="text" placeholder="Clarification prompt text" />
             </div>
           </div>
         </div>
@@ -338,16 +362,16 @@ function handleImportedXml(xmlText) {
   </div>
 
   <ExportXmlModal
-    v-if="showExport"
+    v-if="isExportModalOpen"
     :xml="exportedXml"
-    :filename="exportFileName(playbook.playbookName.value)"
-    @close="showExport = false"
+    :filename="exportFileName(playbookStore.playbookName.value)"
+    @close="isExportModalOpen = false"
   />
   <ImportXmlModal
-    v-if="showImport"
-    :active-playbook-name="playbook.playbookName.value"
+    v-if="isImportModalOpen"
+    :active-playbook-name="playbookStore.playbookName.value"
     :error-message="importError"
-    @close="showImport = false"
+    @close="isImportModalOpen = false"
     @imported="handleImportedXml"
   />
 </template>

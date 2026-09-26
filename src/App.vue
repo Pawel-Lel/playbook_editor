@@ -1,4 +1,13 @@
 <script setup>
+// App.vue — the root component: the header (logo, playbook switcher, Save
+// button, menu, signed-in user) around <RouterView />, which shows the
+// current page. On the login page only the page itself is shown.
+//
+// Vue concepts used in this file:
+//  - ref(): one reactive value (`.value` in script, unwrapped in the template).
+//  - watch(source, callback): runs callback whenever `source` changes.
+//  - useRoute(): the current URL/page (reactive); useRouter(): changes page in code.
+//  - <RouterView />: placeholder where the router renders the current page.
 import { ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { usePlaybooksStore } from './store/playbooks.js'
@@ -8,44 +17,52 @@ import { isSupported as canPickFolder } from './services/localFolder.js'
 const route = useRoute()
 const router = useRouter()
 const playbooksStore = usePlaybooksStore()
-const sync = useCloudSyncStore()
+const cloudSync = useCloudSyncStore()
 
 // Signing out, or the Google token expiring mid-session, sends the person
 // back to the login page; the router guard covers every later navigation.
-watch(sync.signedIn, (signedIn) => {
-  if (!signedIn && !route.meta.public) {
+watch(cloudSync.signedIn, (isSignedIn) => {
+  if (!isSignedIn && !route.meta.public) {
     router.replace({ name: 'login', query: { redirect: route.fullPath } })
   }
 })
 
 function signOut() {
-  sync.disconnect()
+  cloudSync.disconnect()
 }
 
-const saving = ref(false)
+// ---- Save button ------------------------------------------------------
+
+const isSaving = ref(false)
+// The small message under the Save button.
 const saveStatus = ref({ kind: '', text: '' }) // kind: '' | 'ok' | 'error'
-let statusTimer = null
+let hideStatusTimer = null
 
-function showStatus(kind, text) {
+// Shows a message under the Save button for 4 seconds.
+function showSaveStatus(kind, text) {
   saveStatus.value = { kind, text }
-  clearTimeout(statusTimer)
-  statusTimer = setTimeout(() => (saveStatus.value = { kind: '', text: '' }), 4000)
+  clearTimeout(hideStatusTimer)
+  hideStatusTimer = setTimeout(() => (saveStatus.value = { kind: '', text: '' }), 4000)
 }
 
-async function saveLocally(pickFolder = false) {
-  saving.value = true
+// Saves the active playbook's .xml into the chosen local folder.
+// pickFolder = true ("Change folder") asks for a new folder first.
+async function saveToLocalFolder(pickFolder = false) {
+  isSaving.value = true
   try {
     const { fileName, folderName } = await playbooksStore.saveActiveToLocalFolder({ pickFolder })
-    showStatus('ok', folderName ? `Saved ${fileName} to ${folderName}/` : `Downloaded ${fileName}`)
-  } catch (e) {
-    if (e.name !== 'AbortError') showStatus('error', `Save failed: ${e.message}`)
+    showSaveStatus('ok', folderName ? `Saved ${fileName} to ${folderName}/` : `Downloaded ${fileName}`)
+  } catch (error) {
+    // AbortError = the person closed the folder picker; not worth a message.
+    if (error.name !== 'AbortError') showSaveStatus('error', `Save failed: ${error.message}`)
   } finally {
-    saving.value = false
+    isSaving.value = false
   }
 }
 </script>
 
 <template>
+  <!-- The login page (a "public" route) is shown on its own, without the header. -->
   <RouterView v-if="route.meta.public" />
   <template v-else>
   <header class="app-header">
@@ -70,8 +87,8 @@ async function saveLocally(pickFolder = false) {
           :value="playbooksStore.activePlaybookId.value"
           @change="playbooksStore.setActivePlaybookId($event.target.value)"
         >
-          <option v-for="p in playbooksStore.playbooks.value" :key="p.id" :value="p.id">
-            {{ p.playbookName || '(untitled playbook)' }}
+          <option v-for="playbook in playbooksStore.playbooks.value" :key="playbook.id" :value="playbook.id">
+            {{ playbook.playbookName || '(untitled playbook)' }}
           </option>
         </select>
       </div>
@@ -79,18 +96,18 @@ async function saveLocally(pickFolder = false) {
       <div class="local-save">
         <button
           class="btn btn-primary local-save__btn"
-          :disabled="saving"
+          :disabled="isSaving"
           title="Save the active playbook as .xml in a local folder (creates or overwrites the file)"
-          @click="saveLocally()"
+          @click="saveToLocalFolder()"
         >
-          {{ saving ? 'Saving…' : 'Save' }}
+          {{ isSaving ? 'Saving…' : 'Save' }}
         </button>
         <button
           v-if="canPickFolder()"
           class="local-save__folder"
-          :disabled="saving"
+          :disabled="isSaving"
           title="Choose a different local folder, then save"
-          @click="saveLocally(true)"
+          @click="saveToLocalFolder(true)"
         >
           Change folder
         </button>
@@ -118,8 +135,8 @@ async function saveLocally(pickFolder = false) {
       </nav>
 
       <div class="app-user">
-        <span v-if="sync.userEmail.value" class="app-user__email mono" :title="sync.userEmail.value">
-          {{ sync.userEmail.value }}
+        <span v-if="cloudSync.userEmail.value" class="app-user__email mono" :title="cloudSync.userEmail.value">
+          {{ cloudSync.userEmail.value }}
         </span>
         <button class="app-user__signout" @click="signOut">Sign out</button>
       </div>

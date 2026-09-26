@@ -1,4 +1,6 @@
 <script setup>
+// ExportXmlModal — pop-up showing the generated XML, with "Copy to
+// clipboard" and "Download .xml". The parent passes the XML in as a prop.
 import { ref } from 'vue'
 
 const props = defineProps({
@@ -13,26 +15,30 @@ async function copyToClipboard() {
   try {
     await navigator.clipboard.writeText(props.xml)
     copyState.value = 'copied'
-  } catch (e) {
+  } catch {
     copyState.value = 'error'
   }
+  // Reset the "Copied" message after 1.8 seconds.
   setTimeout(() => (copyState.value = 'idle'), 1800)
 }
 
+// Browsers download a file when a link with a `download` attribute is
+// clicked, so: wrap the XML in a Blob, make a temporary link to it, click it.
 function download() {
-  const blob = new Blob([props.xml], { type: 'application/xml' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = props.filename
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
+  const xmlBlob = new Blob([props.xml], { type: 'application/xml' })
+  const blobUrl = URL.createObjectURL(xmlBlob)
+  const downloadLink = document.createElement('a')
+  downloadLink.href = blobUrl
+  downloadLink.download = props.filename
+  document.body.appendChild(downloadLink)
+  downloadLink.click()
+  document.body.removeChild(downloadLink)
+  URL.revokeObjectURL(blobUrl)
 }
 
-function onOverlayClick(e) {
-  if (e.target === e.currentTarget) emit('close')
+// Close when the dark backdrop itself is clicked, not the dialog box.
+function onOverlayClick(event) {
+  if (event.target === event.currentTarget) emit('close')
 }
 </script>
 

@@ -1,100 +1,123 @@
 <script setup>
+// CloudSyncView — the "Cloud sync" page (/cloud-sync): shows the configured
+// bucket, the sign-in status, and buttons to load/save every playbook
+// from/to Google Cloud Storage. The real work happens in store/cloudSync.js.
+//
+// Vue concepts: ref() for this page's own state (busy flag, messages),
+// computed() for values derived from the cloudSync.
 import { ref, computed } from 'vue'
 import { useCloudSyncStore } from '../store/cloudSync.js'
 import { usePlaybooksStore } from '../store/playbooks.js'
 
-const store = useCloudSyncStore()
+const cloudSync = useCloudSyncStore()
 const playbooksStore = usePlaybooksStore()
-const busy = ref(false)
-const message = ref('')
-const messageKind = ref('info') // 'info' | 'error'
-const showSetupHelp = ref(false)
+const isBusy = ref(false) // true while a load/save/sign-in runs (disables the buttons)
+const statusMessage = ref('')
+const statusMessageKind = ref('info') // 'info' | 'error'
+const isSetupHelpOpen = ref(false)
 
-const missingEnv = computed(() => [
-  !store.bucket && 'GCS_BUCKET',
-  !store.clientId && 'GOOGLE_OAUTH_CLIENT_ID'
+// Names of the required environment variables that aren't set.
+// (`!x && 'NAME'` gives 'NAME' when x is empty, else false; filter(Boolean)
+// then drops the false entries.)
+const missingEnvironmentVariables = computed(() => [
+  !cloudSync.bucket && 'GCS_BUCKET',
+  !cloudSync.clientId && 'GOOGLE_OAUTH_CLIENT_ID'
 ].filter(Boolean))
 
-const bucketLocation = computed(() => `gs://${store.bucket}/${store.objectPrefix}`)
+const bucketLocation = computed(() => `gs://${cloudSync.bucket}/${cloudSync.objectPrefix}`)
 
 const statusLabel = computed(() => {
-  if (!store.bucket) return 'Not configured'
-  if (!store.signedIn.value) return 'Configured, not signed in'
+  if (!cloudSync.bucket) return 'Not configured'
+  if (!cloudSync.signedIn.value) return 'Configured, not signed in'
   return 'Signed in'
 })
 
-function formatTime(iso) {
-  if (!iso) return 'never'
+// "2026-09-26T10:00:00Z" → the date/time in the person's local format.
+function formatTime(isoTimestamp) {
+  if (!isoTimestamp) return 'never'
   try {
-    return new Date(iso).toLocaleString()
-  } catch (e) {
-    return iso
+    return new Date(isoTimestamp).toLocaleString()
+  } catch {
+    return isoTimestamp
   }
 }
 
-function summarizeLoad(summary) {
-  if (!summary) return ''
-  const parts = [`Loaded ${summary.loadedCount} playbook${summary.loadedCount === 1 ? '' : 's'} from the bucket.`]
-  if (summary.errors.length) {
-    parts.push(`${summary.errors.length} file${summary.errors.length === 1 ? '' : 's'} failed to parse: ` +
-      summary.errors.map((e) => e.name).join(', ') + '.')
+// A one-line summary of a bucket load, e.g. "Loaded 5 playbooks ...".
+function summarizeLoad(loadSummary) {
+  if (!loadSummary) return ''
+  const sentences = [`Loaded ${loadSummary.loadedCount} playbook${loadSummary.loadedCount === 1 ? '' : 's'} from the bucket.`]
+  if (loadSummary.errors.length) {
+    sentences.push(`${loadSummary.errors.length} file${loadSummary.errors.length === 1 ? '' : 's'} failed to parse: ` +
+      loadSummary.errors.map((failedFile) => failedFile.name).join(', ') + '.')
   }
-  return parts.join(' ')
+  return sentences.join(' ')
 }
 
 async function handleConnect() {
-  busy.value = true
-  message.value = ''
+  isBusy.value = true
+  statusMessage.value = ''
   try {
-    await store.connect()
+    await cloudSync.connect()
     // connect() also loads every playbook in the bucket automatically.
-    message.value = store.lastLoadSummary.value
-      ? summarizeLoad(store.lastLoadSummary.value)
+    statusMessage.value = cloudSync.lastLoadSummary.value
+      ? summarizeLoad(cloudSync.lastLoadSummary.value)
       : 'Signed in to Google.'
-    messageKind.value = store.lastLoadSummary.value?.errors.length ? 'error' : 'info'
-  } catch (e) {
-    message.value = e.message
-    messageKind.value = 'error'
+    statusMessageKind.value = cloudSync.lastLoadSummary.value?.errors.length ? 'error' : 'info'
+  } catch (error) {
+    statusMessage.value = error.message
+    statusMessageKind.value = 'error'
   } finally {
-    busy.value = false
+    isBusy.value = false
   }
 }
 
 function handleDisconnect() {
-  store.disconnect()
-  message.value = 'Signed out.'
-  messageKind.value = 'info'
+  cloudSync.disconnect()
+  statusMessage.value = 'Signed out.'
+  statusMessageKind.value = 'info'
 }
 
 async function handleLoad() {
-  busy.value = true
-  message.value = ''
+  isBusy.value = true
+  statusMessage.value = ''
   try {
-    const summary = await store.loadFromBucket()
-    message.value = summary.loadedCount
-      ? summarizeLoad(summary)
+    const loadSummary = await cloudSync.loadFromBucket()
+    statusMessage.value = loadSummary.loadedCount
+      ? summarizeLoad(loadSummary)
       : "No .xml files found at that bucket/prefix — nothing to load."
-    messageKind.value = summary.errors.length ? 'error' : 'info'
-  } catch (e) {
-    message.value = e.message
-    messageKind.value = 'error'
+    statusMessageKind.value = loadSummary.errors.length ? 'error' : 'info'
+  } catch (error) {
+    statusMessage.value = error.message
+    statusMessageKind.value = 'error'
   } finally {
-    busy.value = false
+    isBusy.value = false
   }
 }
 
 async function handleSave() {
-  busy.value = true
-  message.value = ''
+  // Ask first: saving overwrites each playbook's existing file in the bucket.
+  const playbookNameLines = playbooksStore.playbooks.value.map(
+    (playbook) => `• ${playbook.playbookName || '(untitled playbook)'}`
+  )
+  const bucketLocationText = `gs://${cloudSync.bucket}/${cloudSync.objectPrefix || ''}`
+  const userConfirmed = confirm(
+    `Save all ${playbookNameLines.length} playbook(s) to ${bucketLocationText}?\n\n` +
+      `${playbookNameLines.join('\n')}\n\n` +
+      'Any existing file for these playbooks in the bucket will be OVERWRITTEN with the version in this ' +
+      'browser. The current definitions in the bucket will be lost.\n\nDo you want to proceed?'
+  )
+  if (!userConfirmed) return
+  isBusy.value = true
+  statusMessage.value = ''
   try {
-    await store.saveToBucket()
-    message.value = `Saved ${playbooksStore.playbooks.value.length} playbook(s), one .xml file each, to the bucket.`
-    messageKind.value = 'info'
-  } catch (e) {
-    message.value = e.message
-    messageKind.value = 'error'
+    await cloudSync.saveToBucket()
+    statusMessage.value = `Saved ${playbooksStore.playbooks.value.length} playbook(s), one .xml file each, to the bucket.`
+    statusMessageKind.value = 'info'
+  } catch (error) {
+    statusMessage.value = error.message
+    statusMessageKind.value = 'error'
   } finally {
-    busy.value = false
+    isBusy.value = false
   }
 }
 </script>
@@ -116,18 +139,18 @@ async function handleSave() {
 
     <section class="panel form-section">
       <div class="status-row">
-        <span class="badge" :class="store.signedIn.value ? 'badge-terminal' : 'badge-unknown'">
+        <span class="badge" :class="cloudSync.signedIn.value ? 'badge-terminal' : 'badge-unknown'">
           {{ statusLabel }}
         </span>
-        <span class="hint">Last synced: {{ formatTime(store.lastSyncedAt.value) }}</span>
+        <span class="hint">Last synced: {{ formatTime(cloudSync.lastSyncedAt.value) }}</span>
       </div>
 
       <h3>Bucket</h3>
-      <p v-if="store.bucket" class="bucket-location mono">{{ bucketLocation }}</p>
-      <p v-if="missingEnv.length" class="sync-message error">
+      <p v-if="cloudSync.bucket" class="bucket-location mono">{{ bucketLocation }}</p>
+      <p v-if="missingEnvironmentVariables.length" class="sync-message error">
         Cloud sync isn't fully configured for this deployment. Missing environment
-        variable{{ missingEnv.length === 1 ? '' : 's' }}:
-        <code class="mono">{{ missingEnv.join(', ') }}</code>.
+        variable{{ missingEnvironmentVariables.length === 1 ? '' : 's' }}:
+        <code class="mono">{{ missingEnvironmentVariables.join(', ') }}</code>.
       </p>
       <p class="hint">
         Every <code class="mono">.xml</code> file directly under this location is treated as one playbook — e.g.
@@ -139,41 +162,41 @@ async function handleSave() {
       </p>
       <div class="field field--checkbox">
         <label class="checkbox-label">
-          <input type="checkbox" v-model="store.config.value.autoSync" :disabled="!store.canWrite.value" />
+          <input type="checkbox" v-model="cloudSync.config.value.autoSync" :disabled="!cloudSync.canWrite.value" />
           Auto-save the active playbook's file ~1.5s after any change (requires signing in)
         </label>
       </div>
 
       <div class="actions-row">
-        <button v-if="!store.signedIn.value" class="btn btn-primary" :disabled="busy || !store.clientId" @click="handleConnect">
+        <button v-if="!cloudSync.signedIn.value" class="btn btn-primary" :disabled="isBusy || !cloudSync.clientId" @click="handleConnect">
           Sign in with Google
         </button>
-        <button v-else class="btn btn-secondary" :disabled="busy" @click="handleDisconnect">
+        <button v-else class="btn btn-secondary" :disabled="isBusy" @click="handleDisconnect">
           Sign out
         </button>
-        <button class="btn btn-secondary" :disabled="busy || !store.isConfigured.value" @click="handleLoad">
+        <button class="btn btn-secondary" :disabled="isBusy || !cloudSync.isConfigured.value" @click="handleLoad">
           Load all playbooks from bucket
         </button>
-        <button class="btn btn-primary" :disabled="busy || !store.canWrite.value" @click="handleSave">
+        <button class="btn btn-primary" :disabled="isBusy || !cloudSync.canWrite.value" @click="handleSave">
           Save all playbooks to bucket
         </button>
       </div>
 
-      <p v-if="message" class="sync-message" :class="messageKind">{{ message }}</p>
-      <p v-else-if="store.lastError.value" class="sync-message error">{{ store.lastError.value }}</p>
+      <p v-if="statusMessage" class="sync-message" :class="statusMessageKind">{{ statusMessage }}</p>
+      <p v-else-if="cloudSync.lastError.value" class="sync-message error">{{ cloudSync.lastError.value }}</p>
 
-      <ul v-if="store.lastLoadSummary.value?.errors.length" class="error-list">
-        <li v-for="err in store.lastLoadSummary.value.errors" :key="err.name">
-          <span class="mono">{{ err.name }}</span> — {{ err.message }}
+      <ul v-if="cloudSync.lastLoadSummary.value?.errors.length" class="error-list">
+        <li v-for="failedFile in cloudSync.lastLoadSummary.value.errors" :key="failedFile.name">
+          <span class="mono">{{ failedFile.name }}</span> — {{ failedFile.message }}
         </li>
       </ul>
     </section>
 
     <section class="panel form-section">
-      <button type="button" class="btn btn-ghost setup-toggle" @click="showSetupHelp = !showSetupHelp">
-        {{ showSetupHelp ? '▾' : '▸' }} One-time Google Cloud setup
+      <button type="button" class="btn btn-ghost setup-toggle" @click="isSetupHelpOpen = !isSetupHelpOpen">
+        {{ isSetupHelpOpen ? '▾' : '▸' }} One-time Google Cloud setup
       </button>
-      <div v-if="showSetupHelp" class="setup-help">
+      <div v-if="isSetupHelpOpen" class="setup-help">
         <ol>
           <li>
             In your Google Cloud project, create (or reuse) a Cloud Storage bucket, e.g.

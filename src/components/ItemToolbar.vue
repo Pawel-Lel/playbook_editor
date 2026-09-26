@@ -6,6 +6,9 @@ defineProps({
   total: { type: Number, required: true },
   label: { type: String, default: '' }
 })
+// The buttons don't change anything themselves — they send an event
+// ($emit('up') etc. below) and the parent decides what to do, e.g.
+// <ItemToolbar @up="playbookStore.moveItem('escalations', escalation.id, -1)" />
 defineEmits(['up', 'down', 'remove'])
 </script>
 

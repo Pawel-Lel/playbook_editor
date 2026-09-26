@@ -1,21 +1,42 @@
 <script setup>
+// StepForm — the form for creating or editing one dialog step. Used by
+// both StepCreateView (mode 'create') and StepEditView (mode 'edit').
+//
+// Vue concepts used in this file:
+//  - defineProps({...}): declares the inputs ("props") the parent passes
+//    in, e.g. <StepForm :initial="step" mode="edit" />. Props are
+//    read-only for this component.
+//  - defineEmits([...]): declares the events this component sends up to
+//    its parent; the parent listens with @submit="...", @cancel="...".
+//  - reactive(object): an object Vue watches — the form fields below.
+//    `v-model="stepForm.topic"` in the template keeps an input and that
+//    field in sync both ways.
+//  - watch(source, callback): runs callback whenever `source` changes.
+//  - computed(() => ...): a value derived from other reactive data.
 import { reactive, watch, computed } from 'vue'
 
 const props = defineProps({
-  initial: { type: Object, default: null },
+  initialStep: { type: Object, default: null }, // the step being edited (null when creating)
   mode: { type: String, default: 'create' }, // 'create' | 'edit'
-  allTargets: { type: Array, default: () => [] }, // [{id, kind, label}]
+  allTargets: { type: Array, default: () => [] }, // [{id, kind, label}] — suggestions for "Next step"
   errorMessage: { type: String, default: '' }
 })
 
 const emit = defineEmits(['submit', 'cancel', 'delete'])
 
+// Choices offered in the "Prompt type" dropdown and "Tool type" suggestions.
 const PROMPT_TYPES = ['InitialQuery', 'ConfirmationQuery', 'InternalProcessing']
 const ACTION_TYPES = ['Flow_Invocation', 'RAG_Retrieval', 'Tool_Invocation', 'Internal_State_Update']
 
+// A random, temporary id — only needed so v-for's :key stays stable while
+// editing; the steps store gives items their permanent ids on save.
+function temporaryId(prefix) {
+  return `${prefix}${Math.random().toString(36).slice(2, 9)}`
+}
+
 function blankAction() {
   return {
-    id: `tmpa_${Math.random().toString(36).slice(2, 9)}`,
+    id: temporaryId('tmpa_'),
     toolType: '',
     toolId: '',
     flowId: '',
@@ -26,7 +47,7 @@ function blankAction() {
 
 function blankClassification() {
   return {
-    id: `tmp_${Math.random().toString(36).slice(2, 9)}`,
+    id: temporaryId('tmp_'),
     classificationId: '',
     nextStep: '',
     triggerCondition: '',
@@ -37,57 +58,75 @@ function blankClassification() {
   }
 }
 
-function makeFormState(source) {
+// Builds the form's data from an existing step (or blank, when creating).
+// Classifications and actions are copied ({ ...x }) so typing in the form
+// doesn't change the saved step until the person clicks Save.
+function makeFormState(sourceStep) {
   return reactive({
-    id: source?.id || '',
-    topic: source?.topic || '',
-    issueSummary: source?.issueSummary || '',
-    instructions: source?.instructions || '',
-    comment: source?.comment || '',
-    promptType: source?.promptType || 'InitialQuery',
-    promptComment: source?.promptComment || '',
-    prompt: source?.prompt || '',
-    noMatchResponse: source?.noMatchResponse || '',
-    noInputResponse: source?.noInputResponse || '',
-    classifications: source?.classifications?.length
-      ? source.classifications.map((c) => ({
-          ...c,
-          actions: (c.actions || []).map((a) => ({ ...a }))
+    id: sourceStep?.id || '',
+    topic: sourceStep?.topic || '',
+    issueSummary: sourceStep?.issueSummary || '',
+    instructions: sourceStep?.instructions || '',
+    comment: sourceStep?.comment || '',
+    promptType: sourceStep?.promptType || 'InitialQuery',
+    promptComment: sourceStep?.promptComment || '',
+    prompt: sourceStep?.prompt || '',
+    noMatchResponse: sourceStep?.noMatchResponse || '',
+    noInputResponse: sourceStep?.noInputResponse || '',
+    classifications: sourceStep?.classifications?.length
+      ? sourceStep.classifications.map((classification) => ({
+          ...classification,
+          actions: (classification.actions || []).map((action) => ({ ...action }))
         }))
       : [blankClassification()]
   })
 }
 
-const form = makeFormState(props.initial)
+// Everything the inputs below are bound to with v-model.
+const stepForm = makeFormState(props.initialStep)
 
+// If the parent passes a different step (e.g. the URL changed to another
+// step), refill the form with it.
 watch(
-  () => props.initial,
-  (val) => {
-    Object.assign(form, makeFormState(val))
+  () => props.initialStep,
+  (newInitialStep) => {
+    Object.assign(stepForm, makeFormState(newInitialStep))
   }
 )
 
 function addClassification() {
-  form.classifications.push(blankClassification())
+  stepForm.classifications.push(blankClassification())
 }
-function removeClassification(idx) {
-  form.classifications.splice(idx, 1)
-  if (form.classifications.length === 0) form.classifications.push(blankClassification())
+function removeClassification(classificationIndex) {
+  stepForm.classifications.splice(classificationIndex, 1)
+  // Always keep at least one (empty) classification row on screen.
+  if (stepForm.classifications.length === 0) stepForm.classifications.push(blankClassification())
 }
 function addAction(classification) {
   classification.actions.push(blankAction())
 }
-function removeAction(classification, idx) {
-  classification.actions.splice(idx, 1)
+function removeAction(classification, actionIndex) {
+  classification.actions.splice(actionIndex, 1)
 }
 
-const targetOptions = computed(() => props.allTargets)
+const nextStepSuggestions = computed(() => props.allTargets)
 
+// Sends a plain (non-reactive) copy of the form to the parent, which saves it.
 function handleSubmit() {
-  emit('submit', JSON.parse(JSON.stringify(form)))
+  emit('submit', JSON.parse(JSON.stringify(stepForm)))
 }
 </script>
 
+<!--
+  Template syntax used below:
+   - v-model="stepForm.x"   two-way binding between an input and a field.
+   - @submit.prevent        handle the form's submit event and stop the
+                            browser's default full-page reload.
+   - v-for="(item, index) in list"
+                            repeat an element per list item; `index` is
+                            its position (0, 1, 2...).
+   - $emit('cancel')        send an event to the parent straight from the template.
+-->
 <template>
   <form class="step-form" @submit.prevent="handleSubmit">
     <div v-if="errorMessage" class="form-error">{{ errorMessage }}</div>
@@ -97,25 +136,25 @@ function handleSubmit() {
       <div class="grid-2">
         <div class="field">
           <label :for="'id'">Step ID</label>
-          <input id="id" v-model="form.id" type="text" placeholder="e.g. NoHotWater_Initial" required />
+          <input id="id" v-model="stepForm.id" type="text" placeholder="e.g. NoHotWater_Initial" required />
           <p class="hint">Matches the source XML's DIALOG_STEP ID attribute. Letters, numbers and underscores.</p>
         </div>
         <div class="field">
           <label for="topic">Topic</label>
-          <input id="topic" v-model="form.topic" type="text" placeholder="e.g. No Hot Water Diagnosis" />
+          <input id="topic" v-model="stepForm.topic" type="text" placeholder="e.g. No Hot Water Diagnosis" />
         </div>
       </div>
       <div class="field">
         <label for="issueSummary">Issue summary</label>
-        <textarea id="issueSummary" v-model="form.issueSummary" rows="2" placeholder="Short description of the issue this step addresses"></textarea>
+        <textarea id="issueSummary" v-model="stepForm.issueSummary" rows="2" placeholder="Short description of the issue this step addresses"></textarea>
       </div>
       <div class="field">
         <label for="instructions">Dialog step specific instructions <span class="optional">(optional)</span></label>
-        <textarea id="instructions" v-model="form.instructions" rows="3" placeholder="Your goal is to..."></textarea>
+        <textarea id="instructions" v-model="stepForm.instructions" rows="3" placeholder="Your goal is to..."></textarea>
       </div>
       <div class="field">
         <label for="stepComment">Comment <span class="optional">(optional — exported as an XML comment above this step)</span></label>
-        <textarea id="stepComment" v-model="form.comment" rows="2" class="mono comment-field" placeholder="e.g. SCENARIO 1.0 NO HOT WATER"></textarea>
+        <textarea id="stepComment" v-model="stepForm.comment" rows="2" class="mono comment-field" placeholder="e.g. SCENARIO 1.0 NO HOT WATER"></textarea>
         <p class="hint">Separate paragraphs with a blank line to export them as multiple stacked comments.</p>
       </div>
     </section>
@@ -125,27 +164,27 @@ function handleSubmit() {
       <div class="grid-2">
         <div class="field">
           <label for="promptType">Prompt type</label>
-          <select id="promptType" v-model="form.promptType">
-            <option v-for="t in PROMPT_TYPES" :key="t" :value="t">{{ t }}</option>
+          <select id="promptType" v-model="stepForm.promptType">
+            <option v-for="promptType in PROMPT_TYPES" :key="promptType" :value="promptType">{{ promptType }}</option>
           </select>
         </div>
       </div>
       <div class="field">
         <label for="promptComment">Prompt comment <span class="optional">(optional — exported as an XML comment above the Prompt)</span></label>
-        <textarea id="promptComment" v-model="form.promptComment" rows="2" class="mono comment-field" placeholder="e.g. [DYNAMIC_ISSUE_SUMMARY] will be the full summary generated based on all previous steps"></textarea>
+        <textarea id="promptComment" v-model="stepForm.promptComment" rows="2" class="mono comment-field" placeholder="e.g. [DYNAMIC_ISSUE_SUMMARY] will be the full summary generated based on all previous steps"></textarea>
       </div>
       <div class="field">
         <label for="prompt">Prompt</label>
-        <textarea id="prompt" v-model="form.prompt" rows="2" placeholder="Question or internal-processing note for this step"></textarea>
+        <textarea id="prompt" v-model="stepForm.prompt" rows="2" placeholder="Question or internal-processing note for this step"></textarea>
       </div>
       <div class="grid-2">
         <div class="field">
           <label for="noMatch">NoMatch reprompt <span class="optional">(optional)</span></label>
-          <textarea id="noMatch" v-model="form.noMatchResponse" rows="2" placeholder="Reprompt when input isn't understood"></textarea>
+          <textarea id="noMatch" v-model="stepForm.noMatchResponse" rows="2" placeholder="Reprompt when input isn't understood"></textarea>
         </div>
         <div class="field">
           <label for="noInput">NoInput reprompt <span class="optional">(optional)</span></label>
-          <textarea id="noInput" v-model="form.noInputResponse" rows="2" placeholder="Reprompt when no input is received"></textarea>
+          <textarea id="noInput" v-model="stepForm.noInputResponse" rows="2" placeholder="Reprompt when no input is received"></textarea>
         </div>
       </div>
     </section>
@@ -156,78 +195,85 @@ function handleSubmit() {
         <button type="button" class="btn btn-secondary" @click="addClassification">+ Add classification</button>
       </div>
 
-      <div v-for="(c, idx) in form.classifications" :key="c.id" class="classification-row">
+      <!-- One block per classification (the possible answers to this step). -->
+      <div
+        v-for="(classification, classificationIndex) in stepForm.classifications"
+        :key="classification.id"
+        class="classification-row"
+      >
         <div class="classification-row__top">
-          <span class="mono classification-index">#{{ idx + 1 }}</span>
-          <button type="button" class="btn btn-ghost" @click="removeClassification(idx)" aria-label="Remove classification">
+          <span class="mono classification-index">#{{ classificationIndex + 1 }}</span>
+          <button type="button" class="btn btn-ghost" @click="removeClassification(classificationIndex)" aria-label="Remove classification">
             Remove
           </button>
         </div>
         <div class="grid-2">
           <div class="field">
             <label>Classification ID</label>
-            <input v-model="c.classificationId" type="text" placeholder="e.g. NO_HOT_WATER_MAINS_GAS" />
+            <input v-model="classification.classificationId" type="text" placeholder="e.g. NO_HOT_WATER_MAINS_GAS" />
           </div>
           <div class="field">
             <label>Next step <span class="optional">(optional)</span></label>
-            <input v-model="c.nextStep" list="target-options" type="text" placeholder="Target step ID" />
+            <!-- list="..." links the input to the <datalist> of suggestions below. -->
+            <input v-model="classification.nextStep" list="target-options" type="text" placeholder="Target step ID" />
             <datalist id="target-options">
-              <option v-for="t in targetOptions" :key="t.id" :value="t.id">{{ t.label }}</option>
+              <option v-for="target in nextStepSuggestions" :key="target.id" :value="target.id">{{ target.label }}</option>
             </datalist>
           </div>
         </div>
         <div class="field">
           <label>Trigger condition</label>
-          <input v-model="c.triggerCondition" type="text" placeholder="e.g. user confirms, yes, mains gas boiler" />
+          <input v-model="classification.triggerCondition" type="text" placeholder="e.g. user confirms, yes, mains gas boiler" />
         </div>
         <div class="grid-2">
           <div class="field">
             <label>RAG query parameter <span class="optional">(optional)</span></label>
-            <input v-model="c.query" type="text" placeholder="Bare <Parameter name=&quot;query&quot;> value" />
+            <input v-model="classification.query" type="text" placeholder="Bare <Parameter name=&quot;query&quot;> value" />
           </div>
           <div class="field">
             <label>Dialog response <span class="optional">(optional)</span></label>
-            <input v-model="c.dialogResponse" type="text" placeholder="e.g. Could you tell me which part..." />
+            <input v-model="classification.dialogResponse" type="text" placeholder="e.g. Could you tell me which part..." />
           </div>
         </div>
         <div class="field">
           <label>Comment <span class="optional">(optional — exported as an XML comment above this classification)</span></label>
-          <textarea v-model="c.comment" rows="2" class="mono comment-field" placeholder="e.g. SCENARIO 2.1 BOILER NOT WORKING CORRECTLY: MAINS GAS"></textarea>
+          <textarea v-model="classification.comment" rows="2" class="mono comment-field" placeholder="e.g. SCENARIO 2.1 BOILER NOT WORKING CORRECTLY: MAINS GAS"></textarea>
         </div>
 
         <div class="actions-block">
           <div class="actions-block__head">
             <label class="actions-label">Actions <span class="optional">(optional, any number)</span></label>
-            <button type="button" class="btn btn-ghost btn-ghost--small" @click="addAction(c)">+ Add action</button>
+            <button type="button" class="btn btn-ghost btn-ghost--small" @click="addAction(classification)">+ Add action</button>
           </div>
-          <div v-for="(a, aIdx) in c.actions" :key="a.id" class="action-row">
+          <!-- A v-for inside a v-for: the actions of THIS classification. -->
+          <div v-for="(action, actionIndex) in classification.actions" :key="action.id" class="action-row">
             <div class="grid-3">
               <div class="field">
                 <label>Tool type</label>
-                <input v-model="a.toolType" list="action-types" type="text" placeholder="e.g. Flow_Invocation" />
+                <input v-model="action.toolType" list="action-types" type="text" placeholder="e.g. Flow_Invocation" />
                 <datalist id="action-types">
-                  <option v-for="t in ACTION_TYPES" :key="t" :value="t">{{ t }}</option>
+                  <option v-for="actionType in ACTION_TYPES" :key="actionType" :value="actionType">{{ actionType }}</option>
                 </datalist>
               </div>
               <div class="field">
                 <label>Tool ID <span class="optional">(opt.)</span></label>
-                <input v-model="a.toolId" type="text" placeholder="e.g. heating_hot_water_issues_rag_tool" />
+                <input v-model="action.toolId" type="text" placeholder="e.g. heating_hot_water_issues_rag_tool" />
               </div>
               <div class="field">
                 <label>Flow ID <span class="optional">(opt.)</span></label>
-                <input v-model="a.flowId" type="text" placeholder="e.g. Default_Escalation_Hot_Water" />
+                <input v-model="action.flowId" type="text" placeholder="e.g. Default_Escalation_Hot_Water" />
               </div>
             </div>
             <div class="grid-2">
               <div class="field">
                 <label>Parameter name <span class="optional">(opt.)</span></label>
-                <input v-model="a.parameterName" type="text" placeholder="e.g. query" />
+                <input v-model="action.parameterName" type="text" placeholder="e.g. query" />
               </div>
               <div class="field field--with-remove">
                 <label>Parameter value <span class="optional">(opt.)</span></label>
                 <div class="field--with-remove__row">
-                  <input v-model="a.parameterValue" type="text" placeholder="e.g. {CONCISE_SEARCH_QUERY}" />
-                  <button type="button" class="btn btn-ghost btn-ghost--small" @click="removeAction(c, aIdx)">Remove</button>
+                  <input v-model="action.parameterValue" type="text" placeholder="e.g. {CONCISE_SEARCH_QUERY}" />
+                  <button type="button" class="btn btn-ghost btn-ghost--small" @click="removeAction(classification, actionIndex)">Remove</button>
                 </div>
               </div>
             </div>

@@ -1,4 +1,6 @@
 <script setup>
+// LoginView — the page everyone who isn't signed in sees (/login).
+// onMounted(callback): runs callback once, right after this page appears.
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCloudSyncStore } from '../store/cloudSync.js'
@@ -6,28 +8,31 @@ import { prepareSignIn } from '../services/gcsClient.js'
 
 const route = useRoute()
 const router = useRouter()
-const sync = useCloudSyncStore()
+const cloudSync = useCloudSyncStore()
 
-const busy = ref(false)
-const error = ref('')
+const isSigningIn = ref(false)
+const signInError = ref('')
 
+// Load Google's sign-in script as soon as the page appears, so the popup
+// can open instantly when the button is clicked.
 onMounted(() => {
-  prepareSignIn(sync.clientId).catch((e) => {
-    error.value = e.message
+  prepareSignIn(cloudSync.clientId).catch((error) => {
+    signInError.value = error.message
   })
 })
 
 async function signIn() {
-  busy.value = true
-  error.value = ''
+  isSigningIn.value = true
+  signInError.value = ''
   try {
-    await sync.connect()
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
-    router.replace(redirect)
-  } catch (e) {
-    error.value = e.message
+    await cloudSync.connect()
+    // Go back to the page the person originally asked for (?redirect=...).
+    const redirectPath = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
+    router.replace(redirectPath)
+  } catch (error) {
+    signInError.value = error.message
   } finally {
-    busy.value = false
+    isSigningIn.value = false
   }
 }
 </script>
@@ -43,21 +48,21 @@ async function signIn() {
       <h1>Homeserve</h1>
       <p class="login__sub mono">Diagnostic playbook manager</p>
 
-      <p v-if="sync.sessionExpired.value" class="login__notice">
+      <p v-if="cloudSync.sessionExpired.value" class="login__notice">
         Your session expired. Sign in again to carry on — your local changes are kept.
       </p>
       <p v-else class="login__text">Sign in with your Google account to continue.</p>
 
-      <p v-if="!sync.clientId" class="login__error">
+      <p v-if="!cloudSync.clientId" class="login__error">
         Sign-in is not configured for this deployment — set the
         <span class="mono">GOOGLE_OAUTH_CLIENT_ID</span> environment variable.
       </p>
 
-      <button class="btn btn-primary login__btn" :disabled="busy || !sync.clientId" @click="signIn">
-        {{ busy ? 'Signing in…' : 'Sign in with Google' }}
+      <button class="btn btn-primary login__btn" :disabled="isSigningIn || !cloudSync.clientId" @click="signIn">
+        {{ isSigningIn ? 'Signing in…' : 'Sign in with Google' }}
       </button>
 
-      <p v-if="error" class="login__error" role="alert">{{ error }}</p>
+      <p v-if="signInError" class="login__error" role="alert">{{ signInError }}</p>
     </div>
   </div>
 </template>

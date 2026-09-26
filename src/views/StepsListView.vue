@@ -1,4 +1,10 @@
 <script setup>
+// StepsListView — the "Diagnostic steps" page (/steps): lists the active
+// playbook's steps with search, edit/delete, and XML export.
+//
+// Vue concepts: ref() holds a single reactive value (read/write `.value`
+// in script; the template unwraps it); computed() derives a value that
+// updates automatically when what it reads changes.
 import { ref, computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useStepsStore } from '../store/steps.js'
@@ -6,43 +12,45 @@ import { usePlaybookStore } from '../store/playbook.js'
 import { buildLlmInstructionsXml, exportFileName } from '../utils/xmlExport.js'
 import ExportXmlModal from '../components/ExportXmlModal.vue'
 
-const store = useStepsStore()
-const playbook = usePlaybookStore()
-const search = ref('')
-const confirmingId = ref(null)
-const showExport = ref(false)
+const stepsStore = useStepsStore()
+const playbookStore = usePlaybookStore()
+const searchText = ref('') // bound to the search box with v-model
+const stepIdAwaitingDeleteConfirm = ref(null) // shows "Confirm delete" on that card
+const isExportModalOpen = ref(false)
 
 const exportedXml = computed(() =>
   buildLlmInstructionsXml(
-    playbook.toExportPayload(),
-    store.steps.value
+    playbookStore.toExportPayload(),
+    stepsStore.steps.value
   )
 )
 
-const filtered = computed(() => {
-  const q = search.value.trim().toLowerCase()
-  if (!q) return store.steps.value
-  return store.steps.value.filter((s) =>
-    s.id.toLowerCase().includes(q) ||
-    s.topic.toLowerCase().includes(q) ||
-    s.issueSummary.toLowerCase().includes(q)
+// The steps shown: all of them, or only those matching the search text.
+const visibleSteps = computed(() => {
+  const searchQuery = searchText.value.trim().toLowerCase()
+  if (!searchQuery) return stepsStore.steps.value
+  return stepsStore.steps.value.filter((step) =>
+    step.id.toLowerCase().includes(searchQuery) ||
+    step.topic.toLowerCase().includes(searchQuery) ||
+    step.issueSummary.toLowerCase().includes(searchQuery)
   )
 })
 
-function askDelete(id) {
-  confirmingId.value = id
+// Deleting is two clicks: "Delete" asks, "Confirm delete" does it.
+function askDelete(stepId) {
+  stepIdAwaitingDeleteConfirm.value = stepId
 }
 function cancelDelete() {
-  confirmingId.value = null
+  stepIdAwaitingDeleteConfirm.value = null
 }
-function confirmDelete(id) {
-  store.deleteStep(id)
-  confirmingId.value = null
+function confirmDelete(stepId) {
+  stepsStore.deleteStep(stepId)
+  stepIdAwaitingDeleteConfirm.value = null
 }
 
 function clearAllSteps() {
   if (confirm('Remove every step from this playbook? This cannot be undone.')) {
-    store.clearSteps()
+    stepsStore.clearSteps()
   }
 }
 </script>
@@ -51,22 +59,22 @@ function clearAllSteps() {
   <div class="container">
     <div class="page-head">
       <div>
-        <p class="eyebrow mono">{{ playbook.playbookName.value || '(untitled playbook)' }}</p>
+        <p class="eyebrow mono">{{ playbookStore.playbookName.value || '(untitled playbook)' }}</p>
         <h1>Diagnostic steps</h1>
         <p class="page-sub">
-          {{ store.steps.value.length }} step{{ store.steps.value.length === 1 ? '' : 's' }} in this playbook.
+          {{ stepsStore.steps.value.length }} step{{ stepsStore.steps.value.length === 1 ? '' : 's' }} in this playbook.
         </p>
       </div>
       <div class="page-head__actions">
         <button class="btn btn-secondary" @click="clearAllSteps">Clear all steps</button>
-        <button class="btn btn-secondary" @click="showExport = true">Export XML</button>
+        <button class="btn btn-secondary" @click="isExportModalOpen = true">Export XML</button>
         <RouterLink to="/steps/new" class="btn btn-primary">+ New step</RouterLink>
       </div>
     </div>
 
     <div class="toolbar">
       <input
-        v-model="search"
+        v-model="searchText"
         type="search"
         placeholder="Search by ID, topic or issue summary…"
         aria-label="Search steps"
@@ -74,12 +82,12 @@ function clearAllSteps() {
       <RouterLink to="/flow-map" class="btn btn-secondary">View flow map →</RouterLink>
     </div>
 
-    <div v-if="filtered.length === 0" class="empty-state panel">
-      <p>No steps match "{{ search }}".</p>
+    <div v-if="visibleSteps.length === 0" class="empty-state panel">
+      <p>No steps match "{{ searchText }}".</p>
     </div>
 
     <ul class="step-list">
-      <li v-for="step in filtered" :key="step.id" class="step-card panel">
+      <li v-for="step in visibleSteps" :key="step.id" class="step-card panel">
         <div class="step-card__main">
           <div class="step-card__id mono">{{ step.id }}</div>
           <h3 class="step-card__topic">{{ step.topic || '(no topic set)' }}</h3>
@@ -87,20 +95,21 @@ function clearAllSteps() {
             <!-- {{ step.comment.split('\n')[0] }}{{ step.comment.includes('\n') ? ' …' : '' }} -->
           </p>
           <p class="step-card__summary">{{ step.issueSummary || 'No issue summary provided.' }}</p>
+          <!-- One chip per classification: "answer → next step". -->
           <div class="step-card__targets">
             <span
-              v-for="c in step.classifications"
-              :key="c.id"
+              v-for="classification in step.classifications"
+              :key="classification.id"
               class="target-chip mono"
-              :title="c.triggerCondition"
+              :title="classification.triggerCondition"
             >
-              {{ c.classificationId || '—' }} → {{ c.nextStep || '?' }}
+              {{ classification.classificationId || '—' }} → {{ classification.nextStep || '?' }}
             </span>
           </div>
         </div>
         <div class="step-card__actions">
           <RouterLink :to="`/steps/${encodeURIComponent(step.id)}`" class="btn btn-secondary">Edit</RouterLink>
-          <template v-if="confirmingId === step.id">
+          <template v-if="stepIdAwaitingDeleteConfirm === step.id">
             <button class="btn btn-danger" @click="confirmDelete(step.id)">Confirm delete</button>
             <button class="btn btn-ghost" @click="cancelDelete">Cancel</button>
           </template>
@@ -110,10 +119,10 @@ function clearAllSteps() {
     </ul>
 
     <ExportXmlModal
-      v-if="showExport"
+      v-if="isExportModalOpen"
       :xml="exportedXml"
-      :filename="exportFileName(playbook.playbookName.value)"
-      @close="showExport = false"
+      :filename="exportFileName(playbookStore.playbookName.value)"
+      @close="isExportModalOpen = false"
     />
   </div>
 </template>
