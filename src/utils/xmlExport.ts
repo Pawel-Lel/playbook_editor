@@ -4,6 +4,19 @@
 // inverse of utils/xmlImport.js; the record shape is store/playbooks.js's
 // normalizeRecord().
 
+import type {
+  Action,
+  ActionStep,
+  ClarificationRule,
+  Classification,
+  GlobalReprompt,
+  Guideline,
+  PlaybookSettings,
+  PolicyShape,
+  SectionKey,
+  Step
+} from '../types'
+
 // How this file works: every build...() function returns an array of
 // output lines (`xmlLines`), each already indented; the caller appends them
 // to its own array with `xmlLines.push(...buildX())` (the `...` spreads one
@@ -12,10 +25,10 @@
 
 // One indentation step (4 spaces); indent(2) = 8 spaces, and so on.
 const INDENT_UNIT = '    '
-const indent = (level) => INDENT_UNIT.repeat(level)
+const indent = (level: number): string => INDENT_UNIT.repeat(level)
 
 // Makes text safe to put between XML tags: & < > become &amp; &lt; &gt;
-function escapeXmlText(value) {
+function escapeXmlText(value: unknown): string {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -23,14 +36,14 @@ function escapeXmlText(value) {
 }
 
 // Same, plus " → &quot; so the value can sit inside attribute="..."
-function escapeXmlAttribute(value) {
+function escapeXmlAttribute(value: unknown): string {
   return escapeXmlText(value).replace(/"/g, '&quot;')
 }
 
 // Wraps long text at ~90 chars per line, re-indented, to mirror the
 // hand-wrapped prose formatting used in the source document. Preserves
 // existing line breaks (e.g. "- bullet\n- bullet" instruction blocks).
-function wrapText(text, indentLevel) {
+function wrapText(text: string | null | undefined, indentLevel: number): string {
   const trimmedText = String(text ?? '').trim()
   if (!trimmedText) return ''
   return trimmedText
@@ -38,7 +51,7 @@ function wrapText(text, indentLevel) {
     .map((paragraph) => {
       const words = paragraph.trim().split(/\s+/).filter(Boolean)
       if (!words.length) return ''
-      const wrappedLines = []
+      const wrappedLines: string[] = []
       let currentLine = ''
       words.forEach((word) => {
         if ((currentLine + ' ' + word).trim().length > 90) {
@@ -61,15 +74,15 @@ function wrapText(text, indentLevel) {
 // comments immediately above one element (e.g. a big section note followed
 // by a short scenario label). "--" is escaped since XML comments can't
 // contain it.
-function buildCommentBlock(text, indentLevel) {
+function buildCommentBlock(text: string | null | undefined, indentLevel: number): string[] {
   const trimmedText = String(text || '').trim()
   if (!trimmedText) return []
-  const xmlLines = []
+  const xmlLines: string[] = []
   const paragraphs = trimmedText.split(/\n\s*\n/).map((paragraph) => paragraph.trim()).filter(Boolean)
   paragraphs.forEach((paragraph) => {
     const safeParagraph = paragraph.replace(/--/g, '\u2013\u2013')
     const sourceLines = safeParagraph.split('\n')
-    const wrappedLines = []
+    const wrappedLines: string[] = []
     sourceLines.forEach((sourceLine) => {
       const words = sourceLine.trim().split(/\s+/).filter(Boolean)
       if (!words.length) {
@@ -102,7 +115,7 @@ function buildCommentBlock(text, indentLevel) {
 
 // XML comments can't contain "--"; everything else is emitted verbatim
 // (comments aren't entity-decoded, so "&" must NOT be escaped here).
-function commentSafe(text) {
+function commentSafe(text: string | null | undefined): string {
   return String(text ?? '').replace(/--/g, '\u2013\u2013')
 }
 
@@ -113,7 +126,7 @@ function commentSafe(text) {
 // "ESCALATION_HANDLING before CLARIFICATION_RULES" order and its
 // "<!-- STEP 1: CLARIFY AMBIGUOUS INPUTS -->" headings survive a round trip.
 // ---------------------------------------------------------------------
-export const SECTION_KEYS = [
+export const SECTION_KEYS: SectionKey[] = [
   'SETUP',
   'GUIDELINES',
   'DIALOG_CONSTRAINTS',
@@ -123,7 +136,7 @@ export const SECTION_KEYS = [
   'DIAGNOSTIC_FLOWS'
 ]
 
-export const SECTION_LABELS = {
+export const SECTION_LABELS: Record<SectionKey, string> = {
   SETUP: 'Setup',
   GUIDELINES: 'Guidelines',
   DIALOG_CONSTRAINTS: 'Dialog constraints',
@@ -133,7 +146,7 @@ export const SECTION_LABELS = {
   DIAGNOSTIC_FLOWS: 'Diagnostic flows (dialog steps)'
 }
 
-export const DEFAULT_SECTION_COMMENTS = {
+export const DEFAULT_SECTION_COMMENTS: Record<SectionKey, string> = {
   SETUP: 'SETUP AND INITIALIZATION',
   GUIDELINES: 'CUSTOMER INTERACTION GUIDELINES',
   DIALOG_CONSTRAINTS: 'QUESTIONING CONSTRAINTS',
@@ -145,17 +158,17 @@ export const DEFAULT_SECTION_COMMENTS = {
 
 // A stored comment (even an empty string) wins; only a missing key falls
 // back to the default, so a user can deliberately blank a section comment.
-function sectionComment(playbook, sectionKey) {
+function sectionComment(playbook: PlaybookSettings, sectionKey: SectionKey): string {
   const storedComment = playbook.sectionComments?.[sectionKey]
   return storedComment === undefined || storedComment === null ? DEFAULT_SECTION_COMMENTS[sectionKey] : storedComment
 }
 
-function sectionCommentLines(playbook, sectionKey, indentLevel = 1) {
+function sectionCommentLines(playbook: PlaybookSettings, sectionKey: SectionKey, indentLevel = 1): string[] {
   const commentText = sectionComment(playbook, sectionKey)
   return commentText?.trim() ? [indent(indentLevel) + `<!-- ${commentSafe(commentText.trim())} -->`] : []
 }
 
-function sectionHasContent(playbook, steps, sectionKey) {
+function sectionHasContent(playbook: PlaybookSettings, steps: Step[], sectionKey: SectionKey): boolean {
   switch (sectionKey) {
     case 'SETUP':
     case 'ESCALATION_HANDLING':
@@ -182,9 +195,9 @@ function sectionHasContent(playbook, steps, sectionKey) {
  * content, at its default position. Without a stored order (older saved
  * data, new playbooks) only sections with content are written.
  */
-export function resolveSectionOrder(playbook, steps) {
+export function resolveSectionOrder(playbook: PlaybookSettings, steps: Step[]): SectionKey[] {
   const storedOrder = Array.isArray(playbook.sectionOrder) ? playbook.sectionOrder : []
-  const sectionOrder = []
+  const sectionOrder: SectionKey[] = []
   storedOrder.forEach((sectionKey) => {
     if (SECTION_KEYS.includes(sectionKey) && !sectionOrder.includes(sectionKey)) sectionOrder.push(sectionKey)
   })
@@ -211,8 +224,8 @@ export function resolveSectionOrder(playbook, steps) {
 // each is only emitted if its fields are actually populated, so either (or
 // in principle both) can appear depending on which the playbook uses.
 // ---------------------------------------------------------------------
-function buildSetup(playbook) {
-  const xmlLines = []
+function buildSetup(playbook: PlaybookSettings): string[] {
+  const xmlLines: string[] = []
   xmlLines.push(...sectionCommentLines(playbook, 'SETUP'))
   xmlLines.push(indent(1) + '<SETUP>')
   xmlLines.push(indent(2) + `<PARAMETER_ASSIGNMENT name="param_playbook_name" value="${escapeXmlAttribute(playbook.playbookName)}" />`)
@@ -243,7 +256,7 @@ function buildSetup(playbook) {
 // REQUIREMENT / FORMAT), or 'raw' (rawXml emitted verbatim). Records saved
 // before `shape` existed have it inferred from which fields are filled.
 // ---------------------------------------------------------------------
-export function inferPolicyShape(guideline) {
+export function inferPolicyShape(guideline: Partial<Guideline>): PolicyShape {
   if (guideline.shape === 'text' || guideline.shape === 'structured' || guideline.shape === 'raw') return guideline.shape
   if (guideline.rawXml?.trim()) return 'raw'
   if (
@@ -259,22 +272,22 @@ export function inferPolicyShape(guideline) {
   return 'text'
 }
 
-function flowRef(flowName) {
+function flowRef(flowName: string): string {
   const trimmedName = String(flowName || '').trim()
   return trimmedName.startsWith('${') ? trimmedName : `\${FLOW:${trimmedName}}`
 }
 
-function buildActionStep(actionStep, indentLevel) {
+function buildActionStep(actionStep: ActionStep, indentLevel: number): string {
   if (actionStep.kind === 'INVOKE_FLOW') {
     return indent(indentLevel) + `<INVOKE_FLOW name="${escapeXmlAttribute(flowRef(actionStep.name))}" />`
   }
-  const attributes = [`name="${escapeXmlAttribute(actionStep.name)}"`]
+  const attributes: string[] = [`name="${escapeXmlAttribute(actionStep.name)}"`]
   if (actionStep.value !== undefined && actionStep.value !== '') attributes.push(`value="${escapeXmlAttribute(actionStep.value)}"`)
   return indent(indentLevel) + `<${actionStep.kind || 'SET_PARAMETER'} ${attributes.join(' ')} />`
 }
 
-function buildGuidelinePolicy(guideline) {
-  const xmlLines = []
+function buildGuidelinePolicy(guideline: Guideline): string[] {
+  const xmlLines: string[] = []
   xmlLines.push(...buildCommentBlock(guideline.comment, 2))
   const policyShape = inferPolicyShape(guideline)
   const policyOpenTag = indent(2) + `<POLICY id="${escapeXmlAttribute(guideline.policyId)}">`
@@ -307,8 +320,8 @@ function buildGuidelinePolicy(guideline) {
   return xmlLines
 }
 
-function buildGuidelines(playbook) {
-  const xmlLines = []
+function buildGuidelines(playbook: PlaybookSettings): string[] {
+  const xmlLines: string[] = []
   xmlLines.push(...sectionCommentLines(playbook, 'GUIDELINES'))
   xmlLines.push(indent(1) + '<GUIDELINES>')
   ;(playbook.guidelines || []).forEach((guideline) => xmlLines.push(...buildGuidelinePolicy(guideline)))
@@ -319,8 +332,8 @@ function buildGuidelines(playbook) {
 // ---------------------------------------------------------------------
 // DIALOG_CONSTRAINTS
 // ---------------------------------------------------------------------
-function buildDialogConstraints(playbook) {
-  const xmlLines = []
+function buildDialogConstraints(playbook: PlaybookSettings): string[] {
+  const xmlLines: string[] = []
   xmlLines.push(...sectionCommentLines(playbook, 'DIALOG_CONSTRAINTS'))
   xmlLines.push(indent(1) + '<DIALOG_CONSTRAINTS>')
   ;(playbook.dialogConstraints || []).forEach((constraint) => {
@@ -344,8 +357,8 @@ function buildDialogConstraints(playbook) {
 // router/triage-style schema. Each RULE's own attribute name (condition vs
 // keyword) is preserved per-item.
 // ---------------------------------------------------------------------
-function buildClarificationRuleElement(rule) {
-  const xmlLines = []
+function buildClarificationRuleElement(rule: ClarificationRule): string[] {
+  const xmlLines: string[] = []
   const attributeName = rule.attrName === 'keyword' ? 'keyword' : 'condition'
   xmlLines.push(...buildCommentBlock(rule.comment, 2))
   xmlLines.push(indent(2) + `<RULE ${attributeName}="${escapeXmlAttribute(rule.condition)}">`)
@@ -359,8 +372,8 @@ function buildClarificationRuleElement(rule) {
   return xmlLines
 }
 
-function buildClarificationRules(playbook) {
-  const xmlLines = []
+function buildClarificationRules(playbook: PlaybookSettings): string[] {
+  const xmlLines: string[] = []
   xmlLines.push(...sectionCommentLines(playbook, 'CLARIFICATION_RULES'))
   if (playbook.clarificationRulesCondition?.trim()) {
     xmlLines.push(indent(1) + `<CLARIFICATION_RULES condition="${escapeXmlAttribute(playbook.clarificationRulesCondition)}">`)
@@ -381,8 +394,8 @@ function buildClarificationRules(playbook) {
 // as a classification's <Action> (see buildActionElement below, reused
 // directly here), so tool_type/tool_id/Parameter are genuine, independently
 // editable fields rather than hardcoded boilerplate.
-function buildRepromptBlock(tagName, defaultComment, reprompt, indentLevel) {
-  const xmlLines = []
+function buildRepromptBlock(tagName: string, defaultComment: string, reprompt: GlobalReprompt, indentLevel: number): string[] {
+  const xmlLines: string[] = []
   const commentText = reprompt.comment === undefined || reprompt.comment === null ? defaultComment : reprompt.comment
   xmlLines.push(...buildCommentBlock(commentText, indentLevel))
   xmlLines.push(indent(indentLevel) + `<${tagName}>`)
@@ -394,13 +407,15 @@ function buildRepromptBlock(tagName, defaultComment, reprompt, indentLevel) {
   return xmlLines
 }
 
-function buildGlobalEventHandlers(playbook) {
-  const noMatch = playbook.globalNoMatch || {}
-  const noInput = playbook.globalNoInput || {}
+function buildGlobalEventHandlers(playbook: PlaybookSettings): string[] {
+  // `|| {}` covers older saved data without these fields; `as` tells
+  // TypeScript to treat that empty object as a (blank) reprompt.
+  const noMatch = playbook.globalNoMatch || ({} as GlobalReprompt)
+  const noInput = playbook.globalNoInput || ({} as GlobalReprompt)
   const hasNoMatch = noMatch.prompt?.trim()
   const hasNoInput = noInput.prompt?.trim()
   if (!hasNoMatch && !hasNoInput) return []
-  const xmlLines = []
+  const xmlLines: string[] = []
   xmlLines.push(indent(2) + '<EVENT_HANDLERS>')
   if (hasNoMatch) {
     xmlLines.push(...buildRepromptBlock('NO_MATCH', "Reprompt for when the user's input is not understood (No Match)", noMatch, 3))
@@ -412,8 +427,8 @@ function buildGlobalEventHandlers(playbook) {
   return xmlLines
 }
 
-function buildEscalationHandling(playbook) {
-  const xmlLines = []
+function buildEscalationHandling(playbook: PlaybookSettings): string[] {
+  const xmlLines: string[] = []
   xmlLines.push(...sectionCommentLines(playbook, 'ESCALATION_HANDLING'))
   xmlLines.push(indent(1) + '<ESCALATION_HANDLING>')
   ;(playbook.escalations || []).forEach((escalation) => {
@@ -451,10 +466,10 @@ function buildEscalationHandling(playbook) {
 // ROUTING_LOGIC — a router/triage playbook's equivalent of DIAGNOSTIC_FLOWS,
 // only emitted when the playbook actually has routing categories.
 // ---------------------------------------------------------------------
-function buildRoutingLogic(playbook) {
+function buildRoutingLogic(playbook: PlaybookSettings): string[] {
   const categories = playbook.routingCategories || []
   if (!categories.length) return []
-  const xmlLines = []
+  const xmlLines: string[] = []
   xmlLines.push(...sectionCommentLines(playbook, 'ROUTING_LOGIC'))
   xmlLines.push(indent(1) + '<ROUTING_LOGIC>')
   categories.forEach((category) => {
@@ -473,8 +488,8 @@ function buildRoutingLogic(playbook) {
 // ---------------------------------------------------------------------
 // DIAGNOSTIC_FLOWS
 // ---------------------------------------------------------------------
-function buildEventHandlingBlock() {
-  const xmlLines = []
+function buildEventHandlingBlock(): string[] {
+  const xmlLines: string[] = []
   xmlLines.push(indent(2) + '<EVENT_HANDLING>')
   xmlLines.push(indent(3) + '<RULE scope="all_dialog_steps" priority="high">')
   xmlLines.push(indent(4) + '<TRIGGER>NoInput OR NoMatch event fires in any DIALOG_STEP</TRIGGER>')
@@ -495,8 +510,8 @@ function buildEventHandlingBlock() {
   return xmlLines
 }
 
-function buildRepromptAction(indentLevel) {
-  const xmlLines = []
+function buildRepromptAction(indentLevel: number): string[] {
+  const xmlLines: string[] = []
   xmlLines.push(indent(indentLevel) + '<Action tool_type="Tool_Invocation" tool_id="external_memory_redis">')
   xmlLines.push(
     indent(indentLevel + 1) +
@@ -506,12 +521,12 @@ function buildRepromptAction(indentLevel) {
   return xmlLines
 }
 
-function buildEventHandlers(step) {
+function buildEventHandlers(step: Step): string[] {
   const hasNoMatch = !!step.noMatchResponse?.trim()
   const hasNoInput = !!step.noInputResponse?.trim()
   if (!hasNoMatch && !hasNoInput) return []
 
-  const xmlLines = []
+  const xmlLines: string[] = []
   xmlLines.push(indent(4) + '<EventHandlers>')
   if (hasNoMatch) {
     xmlLines.push(indent(5) + '<!-- Reprompt for when the user\'s input is not understood (No Match) -->')
@@ -531,9 +546,9 @@ function buildEventHandlers(step) {
   return xmlLines
 }
 
-function buildActionElement(action, indentLevel) {
-  const xmlLines = []
-  const attributes = []
+function buildActionElement(action: Partial<Action>, indentLevel: number): string[] {
+  const xmlLines: string[] = []
+  const attributes: string[] = []
   if (action.toolType) attributes.push(`tool_type="${escapeXmlAttribute(action.toolType)}"`)
   if (action.toolId) attributes.push(`tool_id="${escapeXmlAttribute(action.toolId)}"`)
   if (action.flowId) attributes.push(`flow_id="${escapeXmlAttribute(action.flowId)}"`)
@@ -562,10 +577,10 @@ function buildActionElement(action, indentLevel) {
   return xmlLines
 }
 
-function buildClassification(classification) {
-  const xmlLines = []
+function buildClassification(classification: Classification): string[] {
+  const xmlLines: string[] = []
   xmlLines.push(...buildCommentBlock(classification.comment, 4))
-  const attributes = [`ID="${escapeXmlAttribute(classification.classificationId)}"`]
+  const attributes: string[] = [`ID="${escapeXmlAttribute(classification.classificationId)}"`]
   if (classification.nextStep?.trim()) attributes.push(`next_step="${escapeXmlAttribute(classification.nextStep)}"`)
   xmlLines.push(indent(4) + `<Classification ${attributes.join(' ')}>`)
   if (classification.triggerCondition?.trim()) {
@@ -582,8 +597,8 @@ function buildClassification(classification) {
   return xmlLines
 }
 
-function buildDialogStep(step) {
-  const xmlLines = []
+function buildDialogStep(step: Step): string[] {
+  const xmlLines: string[] = []
   xmlLines.push(...buildCommentBlock(step.comment, 2))
   xmlLines.push(indent(2) + `<DIALOG_STEP ID="${escapeXmlAttribute(step.id)}" topic="${escapeXmlAttribute(step.topic)}">`)
   xmlLines.push(indent(3) + `<IssueSummary>${escapeXmlText(step.issueSummary)}</IssueSummary>`)
@@ -606,8 +621,8 @@ function buildDialogStep(step) {
   return xmlLines
 }
 
-function buildDiagnosticFlows(steps, playbook = null) {
-  const xmlLines = []
+function buildDiagnosticFlows(steps: Step[], playbook: PlaybookSettings | null = null): string[] {
+  const xmlLines: string[] = []
   if (playbook) xmlLines.push(...sectionCommentLines(playbook, 'DIAGNOSTIC_FLOWS'))
   xmlLines.push(indent(1) + '<DIAGNOSTIC_FLOWS>')
   xmlLines.push(...buildEventHandlingBlock())
@@ -621,13 +636,12 @@ function buildDiagnosticFlows(steps, playbook = null) {
 /**
  * Serializes the full playbook (config + steps) into an <LLM_INSTRUCTIONS>
  * XML document — the same schema utils/xmlImport.js parses.
- * @param {Object} playbook - a playbook record (see normalizeRecord in store/playbooks.js)
- * @param {Array} steps - that playbook's dialog steps
- * @returns {string}
+ * @param playbook - a playbook record (see normalizeRecord in store/playbooks.js)
+ * @param steps - that playbook's dialog steps
  */
-export function buildLlmInstructionsXml(playbook, steps) {
-  const xmlLines = []
-  const sectionBuilders = {
+export function buildLlmInstructionsXml(playbook: PlaybookSettings, steps: Step[]): string {
+  const xmlLines: string[] = []
+  const sectionBuilders: Record<SectionKey, () => string[]> = {
     SETUP: () => buildSetup(playbook),
     GUIDELINES: () => buildGuidelines(playbook),
     DIALOG_CONSTRAINTS: () => buildDialogConstraints(playbook),
@@ -647,11 +661,9 @@ export function buildLlmInstructionsXml(playbook, steps) {
  * Serializes just the DIAGNOSTIC_FLOWS section (steps only), for cases where
  * only the diagnostic step data — not the surrounding playbook policy — is
  * needed.
- * @param {Array} steps
- * @returns {string}
  */
-export function buildDiagnosticFlowsXml(steps) {
-  const xmlLines = []
+export function buildDiagnosticFlowsXml(steps: Step[]): string {
+  const xmlLines: string[] = []
   xmlLines.push('<?xml version="1.0" encoding="UTF-8"?>')
   xmlLines.push(...buildDiagnosticFlows(steps).map((line) => line.replace(/^ {4}/, '')))
   return xmlLines.join('\n')
@@ -659,11 +671,8 @@ export function buildDiagnosticFlowsXml(steps) {
 
 /**
  * Triggers a browser download of the given text content.
- * @param {string} filename
- * @param {string} content
- * @param {string} mime
  */
-export function downloadTextFile(filename, content, mimeType = 'application/xml') {
+export function downloadTextFile(filename: string, content: string, mimeType = 'application/xml'): void {
   const blob = new Blob([content], { type: mimeType })
   const blobUrl = URL.createObjectURL(blob)
   const downloadLink = document.createElement('a')
@@ -678,10 +687,8 @@ export function downloadTextFile(filename, content, mimeType = 'application/xml'
 /**
  * "<playbook name>.xml" with filesystem-unsafe characters removed — e.g.
  * "Triage.xml" — used as the Export modal's download filename.
- * @param {string} playbookName
- * @returns {string}
  */
-export function exportFileName(playbookName) {
+export function exportFileName(playbookName: string): string {
   const cleanedName = String(playbookName || '')
     .replace(/[\\/:*?"<>|]/g, '')
     .trim()

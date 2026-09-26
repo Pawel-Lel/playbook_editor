@@ -7,7 +7,8 @@
 
 const runtime = (typeof window !== 'undefined' && window.__APP_CONFIG__) || {}
 
-function pick(runtimeKey, viteKey) {
+// Returns the runtime value if set, else the build-time one, else ''.
+function pick(runtimeKey: keyof NonNullable<Window['__APP_CONFIG__']>, viteKey: keyof ImportMetaEnv): string {
   const value = runtime[runtimeKey] || import.meta.env[viteKey] || ''
   return String(value).trim()
 }

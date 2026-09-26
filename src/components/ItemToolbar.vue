@@ -1,15 +1,18 @@
-<script setup>
+<script setup lang="ts">
 // Shared header row for one entry in an editable list: index badge, an
 // optional label, move up/down (order is significant in the XML) and remove.
-defineProps({
-  index: { type: Number, required: true },
-  total: { type: Number, required: true },
-  label: { type: String, default: '' }
-})
+withDefaults(
+  defineProps<{
+    index: number // position in the list, from 0
+    total: number // how many items the list has
+    label?: string
+  }>(),
+  { label: '' }
+)
 // The buttons don't change anything themselves — they send an event
 // ($emit('up') etc. below) and the parent decides what to do, e.g.
 // <ItemToolbar @up="playbookStore.moveItem('escalations', escalation.id, -1)" />
-defineEmits(['up', 'down', 'remove'])
+defineEmits<{ up: []; down: []; remove: [] }>()
 </script>
 
 <template>

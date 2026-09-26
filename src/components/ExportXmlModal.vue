@@ -1,15 +1,18 @@
-<script setup>
+<script setup lang="ts">
 // ExportXmlModal — pop-up showing the generated XML, with "Copy to
 // clipboard" and "Download .xml". The parent passes the XML in as a prop.
 import { ref } from 'vue'
 
-const props = defineProps({
-  xml: { type: String, required: true },
-  filename: { type: String, default: 'diagnostic-flows-export.xml' }
-})
-const emit = defineEmits(['close'])
+const props = withDefaults(
+  defineProps<{
+    xml: string // required: no `?`
+    filename?: string
+  }>(),
+  { filename: 'diagnostic-flows-export.xml' }
+)
+const emit = defineEmits<{ close: [] }>()
 
-const copyState = ref('idle') // 'idle' | 'copied' | 'error'
+const copyState = ref<'idle' | 'copied' | 'error'>('idle')
 
 async function copyToClipboard() {
   try {
@@ -24,7 +27,7 @@ async function copyToClipboard() {
 
 // Browsers download a file when a link with a `download` attribute is
 // clicked, so: wrap the XML in a Blob, make a temporary link to it, click it.
-function download() {
+function download(): void {
   const xmlBlob = new Blob([props.xml], { type: 'application/xml' })
   const blobUrl = URL.createObjectURL(xmlBlob)
   const downloadLink = document.createElement('a')
@@ -37,7 +40,7 @@ function download() {
 }
 
 // Close when the dark backdrop itself is clicked, not the dialog box.
-function onOverlayClick(event) {
+function onOverlayClick(event: MouseEvent): void {
   if (event.target === event.currentTarget) emit('close')
 }
 </script>

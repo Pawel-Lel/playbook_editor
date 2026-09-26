@@ -14,17 +14,36 @@
 //  - computed(...): a derived value that updates automatically. A computed
 //    with get/set (see activePlaybookId below) can also be assigned to.
 import { reactive, watch, computed } from 'vue'
-import { registerSyncTarget, scheduleAutoSave } from './cloudSync.js'
-import * as googleCloudStorage from '../services/gcsClient.js'
-import * as localFolder from '../services/localFolder.js'
-import { parsePlaybookXml, blankGuideline } from '../utils/xmlImport.js'
-import { buildLlmInstructionsXml, downloadTextFile } from '../utils/xmlExport.js'
+import { registerSyncTarget, scheduleAutoSave } from './cloudSync'
+import * as googleCloudStorage from '../services/gcsClient'
+import * as localFolder from '../services/localFolder'
+import { parsePlaybookXml, blankGuideline } from '../utils/xmlImport'
+import { buildLlmInstructionsXml, downloadTextFile } from '../utils/xmlExport'
+import type { FileError, GlobalReprompt, ParsedPlaybook, PlaybookRecord } from '../types'
+
+/** What a bucket load reports back to Cloud sync. */
+export interface LoadSummary {
+  loadedCount: number
+  errors: FileError[]
+}
+
+/** What "Open files…" reports back to the Playbooks page. */
+export interface OpenFilesResult {
+  added: number
+  updated: number
+  errors: FileError[]
+  cancelled?: boolean
+}
+
+// (`(x as any)[fieldName] = ...` below: copying fields by a name held in a
+// variable is something relaxed TypeScript can't check, so `as any` tells
+// it to allow it here.)
 
 // The browser localStorage key every playbook is saved under.
 const STORAGE_KEY = 'playbook-editor:playbooks:v1'
 
 // "Heating and Hot Water" → "heating-and-hot-water" (used as a playbook id).
-function slugify(text) {
+function slugify(text: string): string {
   const slug = String(text || '')
     .trim()
     .toLowerCase()
@@ -36,14 +55,14 @@ function slugify(text) {
 // Default shape for a global reprompt with no data yet — a prompt plus the
 // same action shape a classification's action uses (toolType/toolId/
 // flowId/parameterName/parameterValue), all independently editable.
-function blankGlobalReprompt() {
+function blankGlobalReprompt(): GlobalReprompt {
   return { comment: undefined, prompt: '', action: { toolType: '', toolId: '', flowId: '', parameterName: '', parameterValue: '' } }
 }
 
 // Every playbook-level field the editor and exporter understand, copied off
 // a parsed XML result (or any partial record). One list, used by every
 // import path, so a newly added field can't be dropped by one of them.
-const PARSED_FIELDS = [
+const PARSED_FIELDS: (keyof ParsedPlaybook)[] = [
   'setup',
   'guidelines',
   'dialogConstraints',
@@ -64,7 +83,7 @@ const PARSED_FIELDS = [
  * localStorage data, or JSON from an earlier version) so views can v-model
  * into them without null checks. Mutates and returns the record.
  */
-export function normalizeRecord(record) {
+export function normalizeRecord<RecordType extends Partial<PlaybookRecord>>(record: RecordType): RecordType {
   if (!record) return record
   record.setup = { contextInstruction: '', contextConstraint: '', role: '', objective: '', ...(record.setup || {}) }
   ;['guidelines', 'dialogConstraints', 'clarificationRules', 'escalations', 'routingCategories', 'steps'].forEach((listField) => {
@@ -102,7 +121,7 @@ export function normalizeRecord(record) {
 }
 
 // A new, empty playbook with every field present.
-function blankPlaybookRecord(id, name) {
+function blankPlaybookRecord(id: string, name: string): PlaybookRecord {
   return {
     id,
     sourceObjectPath: '', // path of its file in the bucket, once it has one
@@ -131,7 +150,13 @@ const STARTER_NAME = 'Untitled playbook'
 // bucket (Cloud sync) or a local folder. Until one is loaded, a single
 // blank playbook keeps the "there is always an active playbook" invariant
 // every view relies on.
-function defaultState() {
+/** The whole state of this store. */
+interface PlaybooksState {
+  playbooks: PlaybookRecord[]
+  activePlaybookId: string
+}
+
+function defaultState(): PlaybooksState {
   const starterPlaybook = blankPlaybookRecord(STARTER_ID, STARTER_NAME)
   return {
     playbooks: [starterPlaybook],
@@ -140,7 +165,7 @@ function defaultState() {
 }
 
 // Reads the saved playbooks back from localStorage (or starts fresh).
-function loadInitialState() {
+function loadInitialState(): PlaybooksState {
   try {
     const savedJson = localStorage.getItem(STORAGE_KEY)
     if (savedJson) {
@@ -160,7 +185,7 @@ function loadInitialState() {
 }
 
 // THE shared state of this store: { playbooks: [...], activePlaybookId }.
-const playbooksState = reactive(loadInitialState())
+const playbooksState = reactive<PlaybooksState>(loadInitialState())
 
 // After every change anywhere inside playbooksState (`deep: true` watches
 // nested properties too), save everything to localStorage and let Cloud
@@ -179,7 +204,7 @@ watch(
 )
 
 // "triage" → "triage", or "triage-2", "triage-3"... if that id is taken.
-function uniqueId(baseId) {
+function uniqueId(baseId: string): string {
   let candidateId = baseId
   let suffixNumber = 2
   while (playbooksState.playbooks.some((playbook) => playbook.id === candidateId)) {
@@ -195,7 +220,7 @@ function uniqueId(baseId) {
  * their own copy of state. Falls back to the first playbook if the active
  * ID is somehow stale (e.g. after a cloud load that dropped it).
  */
-export function getActivePlaybookRecord() {
+export function getActivePlaybookRecord(): PlaybookRecord {
   let activeRecord = playbooksState.playbooks.find((playbook) => playbook.id === playbooksState.activePlaybookId)
   if (!activeRecord) {
     activeRecord = playbooksState.playbooks[0]
@@ -211,7 +236,7 @@ export function getActivePlaybookRecord() {
 // ---------------------------------------------------------------------
 
 // Removes characters that aren't allowed in file names.
-function sanitizeFileName(name) {
+function sanitizeFileName(name: string): string {
   const cleanedName = String(name || 'Untitled Playbook')
     .trim()
     .replace(/[\\/:*?"<>|]/g, '')
@@ -221,14 +246,14 @@ function sanitizeFileName(name) {
 // Guards against a common footgun: a prefix entered without its trailing
 // slash (e.g. "flows" instead of "flows/") would otherwise get glued
 // straight onto the filename ("flowsMyPlaybook.xml").
-function normalizedPrefix(prefix) {
+function normalizedPrefix(prefix: string): string {
   const trimmedPrefix = (prefix || '').trim()
   if (!trimmedPrefix) return ''
   return trimmedPrefix.endsWith('/') ? trimmedPrefix : `${trimmedPrefix}/`
 }
 
 // "flows/" + "Triage" → "flows/Triage.xml"
-function objectPathFor(prefix, fileNameWithoutExtension) {
+function objectPathFor(prefix: string, fileNameWithoutExtension: string): string {
   return `${normalizedPrefix(prefix)}${fileNameWithoutExtension}.xml`
 }
 
@@ -237,7 +262,12 @@ function objectPathFor(prefix, fileNameWithoutExtension) {
 // `origin` records where the file came from — { sourceObjectPath } for a
 // bucket object, { localFileName } for a file in a local folder — so later
 // saves overwrite that same file.
-function playbookRecordFromParsed(fileName, parsedPlaybook, usedIds, origin) {
+function playbookRecordFromParsed(
+  fileName: string,
+  parsedPlaybook: ParsedPlaybook,
+  usedIds: Set<string>,
+  origin: { sourceObjectPath?: string; localFileName?: string }
+): PlaybookRecord {
   const displayName = parsedPlaybook.playbookName || fileName.replace(/\.xml$/i, '')
   const baseId = slugify(displayName)
   let candidateId = baseId
@@ -247,16 +277,17 @@ function playbookRecordFromParsed(fileName, parsedPlaybook, usedIds, origin) {
     suffixNumber += 1
   }
   usedIds.add(candidateId)
-  const record = { id: candidateId, sourceObjectPath: '', localFileName: '', ...origin, playbookName: displayName }
+  const record: Partial<PlaybookRecord> = { id: candidateId, sourceObjectPath: '', localFileName: '', ...origin, playbookName: displayName }
   PARSED_FIELDS.forEach((fieldName) => {
-    if (parsedPlaybook[fieldName] !== undefined) record[fieldName] = parsedPlaybook[fieldName]
+    if (parsedPlaybook[fieldName] !== undefined) (record as any)[fieldName] = parsedPlaybook[fieldName]
   })
-  return normalizeRecord(record)
+  // normalizeRecord fills in every missing field, so it's now a full record.
+  return normalizeRecord(record) as PlaybookRecord
 }
 
 // Replaces the local collection wholesale with what a bucket or folder
 // load found. Leaves it untouched when nothing loaded.
-function replaceCollection(newRecords) {
+function replaceCollection(newRecords: PlaybookRecord[]): void {
   if (!newRecords.length) return
   playbooksState.playbooks.splice(0, playbooksState.playbooks.length, ...newRecords)
   playbooksState.activePlaybookId = newRecords[0].id
@@ -266,14 +297,13 @@ function replaceCollection(newRecords) {
  * Lists every .xml object in the bucket (under `prefix`), parses each into
  * a playbook, and replaces the local collection wholesale. A file that
  * fails to parse is skipped (not fatal to the rest) and reported back.
- * @returns {Promise<{loadedCount: number, errors: Array<{name: string, message: string}>}>}
  */
-async function loadAllFromBucket(bucket, prefix) {
+async function loadAllFromBucket(bucket: string, prefix: string): Promise<LoadSummary> {
   const bucketObjects = await googleCloudStorage.listObjects(bucket, normalizedPrefix(prefix), { delimiter: '/' })
   const xmlObjects = bucketObjects.filter((bucketObject) => bucketObject.name.toLowerCase().endsWith('.xml'))
-  const usedIds = new Set()
-  const loadedRecords = []
-  const errors = []
+  const usedIds = new Set<string>()
+  const loadedRecords: PlaybookRecord[] = []
+  const errors: FileError[] = []
   for (const xmlObject of xmlObjects) {
     try {
       const xmlText = await googleCloudStorage.readTextObject(bucket, xmlObject.name)
@@ -289,7 +319,7 @@ async function loadAllFromBucket(bucket, prefix) {
   return { loadedCount: loadedRecords.length, errors }
 }
 
-async function saveOneRecordToBucket(bucket, prefix, record) {
+async function saveOneRecordToBucket(bucket: string, prefix: string, record: PlaybookRecord | undefined): Promise<void> {
   if (!record) return
   const objectPath = record.sourceObjectPath || objectPathFor(prefix, localFileNameFor(record).replace(/\.xml$/i, ''))
   const xmlText = buildLlmInstructionsXml(record, record.steps)
@@ -297,13 +327,13 @@ async function saveOneRecordToBucket(bucket, prefix, record) {
   record.sourceObjectPath = objectPath
 }
 
-async function saveAllToBucket(bucket, prefix) {
+async function saveAllToBucket(bucket: string, prefix: string): Promise<void> {
   for (const record of playbooksState.playbooks) {
     await saveOneRecordToBucket(bucket, prefix, record)
   }
 }
 
-async function saveActiveToBucket(bucket, prefix) {
+async function saveActiveToBucket(bucket: string, prefix: string): Promise<void> {
   await saveOneRecordToBucket(bucket, prefix, getActivePlaybookRecord())
 }
 
@@ -313,7 +343,7 @@ async function saveActiveToBucket(bucket, prefix) {
 // in the bucket, so the local folder mirrors the bucket's layout.
 // ---------------------------------------------------------------------
 
-function localFileNameFor(record) {
+function localFileNameFor(record: PlaybookRecord): string {
   if (record.localFileName) return record.localFileName
   if (record.sourceObjectPath) return record.sourceObjectPath.split('/').pop()
   return `${sanitizeFileName(record.playbookName)}.xml`
@@ -323,10 +353,11 @@ function localFileNameFor(record) {
  * Saves the active playbook to the remembered local folder (prompting for
  * one the first time), or downloads it where folder access isn't
  * supported. Must be called from a click handler.
- * @param {{ pickFolder?: boolean }} options - pickFolder: choose a new folder first
- * @returns {Promise<{ fileName: string, folderName: string|null }>}
+ * @param options - pickFolder: choose a new folder first
  */
-async function saveActiveToLocalFolder({ pickFolder = false } = {}) {
+async function saveActiveToLocalFolder(
+  { pickFolder = false }: { pickFolder?: boolean } = {}
+): Promise<{ fileName: string; folderName: string | null }> {
   const activeRecord = getActivePlaybookRecord()
   if (!activeRecord) throw new Error('No active playbook to save.')
   const fileName = localFileNameFor(activeRecord)
@@ -343,7 +374,7 @@ async function saveActiveToLocalFolder({ pickFolder = false } = {}) {
 
 // True for the blank "Untitled playbook" the app starts with, while it's
 // still untouched — opened files replace it rather than sitting beside it.
-function isPristineStarter(record) {
+function isPristineStarter(record: PlaybookRecord): boolean {
   const allListsEmpty = ['guidelines', 'dialogConstraints', 'clarificationRules', 'escalations', 'routingCategories', 'steps']
     .every((listField) => !record[listField]?.length)
   const setupEmpty = Object.values(record.setup || {}).every((setupValue) => !setupValue)
@@ -366,15 +397,16 @@ function isPristineStarter(record) {
  * than adding a duplicate; the rest are added as new playbooks. A file
  * that fails to parse is skipped and reported back. The first opened
  * playbook becomes active.
- * @param {Array<{ name: string, text: string }>} files
- * @param {{ confirmReplace?: (fileNames: string[]) => boolean }} options - asked
+ * @param options - asked
  *   before overwriting existing playbooks; returning false changes nothing
- * @returns {{ added: number, updated: number, errors: Array<{name: string, message: string}>, cancelled?: boolean }}
  */
-function openLocalFiles(files, { confirmReplace } = {}) {
+function openLocalFiles(
+  files: { name: string; text: string }[],
+  { confirmReplace }: { confirmReplace?: (fileNames: string[]) => boolean } = {}
+): OpenFilesResult {
   // 1. Parse every file; collect the ones that fail.
-  const errors = []
-  const parsedFiles = []
+  const errors: FileError[] = []
+  const parsedFiles: { name: string; parsed: ParsedPlaybook }[] = []
   for (const file of files) {
     try {
       parsedFiles.push({ name: file.name, parsed: parsePlaybookXml(file.text) })
@@ -398,13 +430,13 @@ function openLocalFiles(files, { confirmReplace } = {}) {
     playbooksState.playbooks.splice(0, 1)
   }
   const usedIds = new Set(playbooksState.playbooks.map((playbook) => playbook.id))
-  let firstOpenedId = null
+  let firstOpenedId: string | null = null
   filesToUpdate.forEach(({ name, parsed }) => {
     const existingRecord = loadedPlaybookByFileName.get(name.toLowerCase())
     existingRecord.playbookName = parsed.playbookName || existingRecord.playbookName
     existingRecord.localFileName = name
     PARSED_FIELDS.forEach((fieldName) => {
-      existingRecord[fieldName] = parsed[fieldName]
+      ;(existingRecord as any)[fieldName] = parsed[fieldName]
     })
     normalizeRecord(existingRecord)
     firstOpenedId = firstOpenedId || existingRecord.id
@@ -439,7 +471,7 @@ export function usePlaybooksStore() {
 
   // A computed with a getter and a setter: reading gives the active id,
   // assigning switches the active playbook (ignoring unknown ids).
-  const activePlaybookId = computed({
+  const activePlaybookId = computed<string>({
     get: () => playbooksState.activePlaybookId,
     set: (newActiveId) => {
       if (playbooksState.playbooks.some((playbook) => playbook.id === newActiveId)) {
@@ -450,11 +482,11 @@ export function usePlaybooksStore() {
 
   const activePlaybook = computed(() => getActivePlaybookRecord())
 
-  function setActivePlaybookId(playbookId) {
+  function setActivePlaybookId(playbookId: string): void {
     activePlaybookId.value = playbookId
   }
 
-  function createPlaybook(name) {
+  function createPlaybook(name: string): PlaybookRecord {
     const trimmedName = (name || '').trim()
     if (!trimmedName) throw new Error('A playbook name is required.')
     const newId = uniqueId(slugify(trimmedName))
@@ -464,7 +496,7 @@ export function usePlaybooksStore() {
     return newRecord
   }
 
-  function renamePlaybook(playbookId, newName) {
+  function renamePlaybook(playbookId: string, newName: string): void {
     const record = playbooksState.playbooks.find((playbook) => playbook.id === playbookId)
     if (!record) throw new Error(`Playbook "${playbookId}" not found.`)
     const trimmedName = (newName || '').trim()
@@ -472,11 +504,11 @@ export function usePlaybooksStore() {
     record.playbookName = trimmedName
   }
 
-  function duplicatePlaybook(playbookId) {
+  function duplicatePlaybook(playbookId: string): PlaybookRecord {
     const sourceRecord = playbooksState.playbooks.find((playbook) => playbook.id === playbookId)
     if (!sourceRecord) throw new Error(`Playbook "${playbookId}" not found.`)
     // JSON round-trip = a deep copy, so editing the copy never touches the original.
-    const copiedRecord = JSON.parse(JSON.stringify(sourceRecord))
+    const copiedRecord: PlaybookRecord = JSON.parse(JSON.stringify(sourceRecord))
     copiedRecord.id = uniqueId(slugify(`${sourceRecord.playbookName}-copy`))
     copiedRecord.playbookName = `${sourceRecord.playbookName} (copy)`
     copiedRecord.sourceObjectPath = '' // must save to its own new files, never the source's
@@ -490,19 +522,19 @@ export function usePlaybooksStore() {
   // place (keeping its id and, if it has one, its bucket sourceObjectPath —
   // so a later save still overwrites the same file) rather than creating a
   // new playbook.
-  function replaceActivePlaybookFromXml(xmlText) {
+  function replaceActivePlaybookFromXml(xmlText: string): PlaybookRecord {
     const parsedPlaybook = parsePlaybookXml(xmlText)
     const activeRecord = getActivePlaybookRecord()
     if (!activeRecord) throw new Error('No active playbook to import into.')
     activeRecord.playbookName = parsedPlaybook.playbookName || activeRecord.playbookName
     PARSED_FIELDS.forEach((fieldName) => {
-      activeRecord[fieldName] = parsedPlaybook[fieldName]
+      ;(activeRecord as any)[fieldName] = parsedPlaybook[fieldName]
     })
     normalizeRecord(activeRecord)
     return activeRecord
   }
 
-  function deletePlaybook(playbookId) {
+  function deletePlaybook(playbookId: string): void {
     if (playbooksState.playbooks.length <= 1) throw new Error('At least one playbook must remain.')
     const playbookIndex = playbooksState.playbooks.findIndex((playbook) => playbook.id === playbookId)
     if (playbookIndex === -1) return

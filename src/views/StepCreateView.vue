@@ -1,10 +1,11 @@
-<script setup>
+<script setup lang="ts">
 // StepCreateView — the "Create a step" page (/steps/new). The form itself
 // lives in StepForm.vue; this page only saves what the form submits.
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import StepForm from '../components/StepForm.vue'
-import { useStepsStore } from '../store/steps.js'
+import { useStepsStore } from '../store/steps'
+import type { Step } from '../types'
 
 const router = useRouter()
 const stepsStore = useStepsStore()
@@ -12,7 +13,7 @@ const stepsStore = useStepsStore()
 const errorMessage = ref('')
 
 // Called when StepForm emits 'submit' (see @submit below).
-function handleSubmit(submittedStep) {
+function handleSubmit(submittedStep: Step): void {
   try {
     const createdStep = stepsStore.createStep(submittedStep)
     // Go to the new step's edit page.

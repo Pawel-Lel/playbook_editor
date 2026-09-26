@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // PlaybookSettingsView — the "Playbook Editor" page (/playbook): every
 // setting of the active playbook outside its dialog steps. It shows one of
 // two layouts depending on the playbook's shape (router/triage or
@@ -15,16 +15,25 @@
 //    </EscalationsEditor> is shown inside that component, where its
 //    <slot /> tag is.
 import { ref, computed } from 'vue'
-import { usePlaybookStore } from '../store/playbook.js'
-import { useStepsStore } from '../store/steps.js'
-import { usePlaybooksStore } from '../store/playbooks.js'
-import { buildLlmInstructionsXml, exportFileName } from '../utils/xmlExport.js'
+import { usePlaybookStore } from '../store/playbook'
+import { useStepsStore } from '../store/steps'
+import { usePlaybooksStore } from '../store/playbooks'
+import { buildLlmInstructionsXml, exportFileName } from '../utils/xmlExport'
 import ExportXmlModal from '../components/ExportXmlModal.vue'
 import ImportXmlModal from '../components/ImportXmlModal.vue'
 import GuidelinesEditor from '../components/GuidelinesEditor.vue'
 import EscalationsEditor from '../components/EscalationsEditor.vue'
 import DocumentLayoutEditor from '../components/DocumentLayoutEditor.vue'
 import ItemToolbar from '../components/ItemToolbar.vue'
+import type { GlobalReprompt } from '../types'
+
+/** One of the two reprompt editor columns (see `reprompts` below). */
+interface RepromptColumn {
+  key: 'noMatch' | 'noInput'
+  label: string
+  tag: string
+  data: GlobalReprompt
+}
 
 const playbookStore = usePlaybookStore()
 const stepsStore = useStepsStore()
@@ -45,7 +54,7 @@ const exportedXml = computed(() => buildLlmInstructionsXml(playbookStore.toExpor
 // The two playbook-level reprompts share one editor block (rendered with
 // v-for below). `data` is the actual reprompt object in the store, so
 // v-model on its fields edits the playbook directly.
-const reprompts = computed(() => [
+const reprompts = computed<RepromptColumn[]>(() => [
   { key: 'noMatch', label: 'No-match', tag: 'NO_MATCH', data: playbookStore.globalNoMatch.value },
   { key: 'noInput', label: 'No-input', tag: 'NO_INPUT', data: playbookStore.globalNoInput.value }
 ])
@@ -54,25 +63,25 @@ const DEFAULT_REPROMPT_COMMENTS = {
   noInput: 'Reprompt for when the user provides no input (No Input)'
 }
 // The reprompt's own comment, or the default one if it has never been set.
-function repromptComment(reprompt) {
+function repromptComment(reprompt: RepromptColumn): string {
   return reprompt.data.comment === undefined || reprompt.data.comment === null
     ? DEFAULT_REPROMPT_COMMENTS[reprompt.key]
     : reprompt.data.comment
 }
 
-function clearPlaybookSettings() {
+function clearPlaybookSettings(): void {
   if (confirm("Clear this playbook's settings? This cannot be undone.")) {
     playbookStore.clearSettings()
   }
 }
 
-function openImportModal() {
+function openImportModal(): void {
   importError.value = ''
   isImportModalOpen.value = true
 }
 
 // Called when ImportXmlModal emits 'imported' with the XML text.
-function handleImportedXml(xmlText) {
+function handleImportedXml(xmlText: string): void {
   try {
     playbooksStore.replaceActivePlaybookFromXml(xmlText)
     isImportModalOpen.value = false
@@ -150,7 +159,7 @@ function handleImportedXml(xmlText) {
               <!-- Not v-model: the box shows the default comment until one is typed,
                    so it reads through repromptComment() and writes on each keystroke
                    ($event is the browser's input event). -->
-              <input :value="repromptComment(reprompt)" type="text" @input="reprompt.data.comment = $event.target.value" />
+              <input :value="repromptComment(reprompt)" type="text" @input="reprompt.data.comment = ($event.target as HTMLInputElement).value" />
             </div>
             <div class="field">
               <label>{{ reprompt.label }} prompt</label>

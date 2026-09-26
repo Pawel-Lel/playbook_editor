@@ -1,12 +1,13 @@
-<script setup>
+<script setup lang="ts">
 // StepEditView — the "Edit step" page (/steps/:id). The router passes the
 // :id part of the URL in as the `id` prop (see `props: true` in the router).
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import StepForm from '../components/StepForm.vue'
-import { useStepsStore } from '../store/steps.js'
+import { useStepsStore } from '../store/steps'
+import type { Step } from '../types'
 
-const props = defineProps({ id: { type: String, required: true } })
+const props = defineProps<{ id: string }>()
 const router = useRouter()
 const stepsStore = useStepsStore()
 const errorMessage = ref('')
@@ -31,7 +32,7 @@ const nextStepSuggestions = computed(() =>
 )
 
 // Called when StepForm emits 'submit'.
-function handleSubmit(submittedStep) {
+function handleSubmit(submittedStep: Step): void {
   try {
     const updatedStep = stepsStore.updateStep(props.id, submittedStep)
     // The step ID may have been renamed, so follow it to its new URL.
@@ -41,7 +42,7 @@ function handleSubmit(submittedStep) {
   }
 }
 
-function handleDelete() {
+function handleDelete(): void {
   if (confirm(`Delete step "${props.id}"? This cannot be undone.`)) {
     stepsStore.deleteStep(props.id)
     router.push('/steps')

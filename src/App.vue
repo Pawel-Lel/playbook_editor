@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // App.vue — the root component: the header (logo, playbook switcher, Save
 // button, menu, signed-in user) around <RouterView />, which shows the
 // current page. On the login page only the page itself is shown.
@@ -10,9 +10,9 @@
 //  - <RouterView />: placeholder where the router renders the current page.
 import { ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
-import { usePlaybooksStore } from './store/playbooks.js'
-import { useCloudSyncStore } from './store/cloudSync.js'
-import { isSupported as canPickFolder } from './services/localFolder.js'
+import { usePlaybooksStore } from './store/playbooks'
+import { useCloudSyncStore } from './store/cloudSync'
+import { isSupported as canPickFolder } from './services/localFolder'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,7 +27,7 @@ watch(cloudSync.signedIn, (isSignedIn) => {
   }
 })
 
-function signOut() {
+function signOut(): void {
   cloudSync.disconnect()
 }
 
@@ -35,11 +35,12 @@ function signOut() {
 
 const isSaving = ref(false)
 // The small message under the Save button.
-const saveStatus = ref({ kind: '', text: '' }) // kind: '' | 'ok' | 'error'
-let hideStatusTimer = null
+type SaveStatusKind = '' | 'ok' | 'error'
+const saveStatus = ref<{ kind: SaveStatusKind; text: string }>({ kind: '', text: '' })
+let hideStatusTimer: ReturnType<typeof setTimeout> | null = null
 
 // Shows a message under the Save button for 4 seconds.
-function showSaveStatus(kind, text) {
+function showSaveStatus(kind: SaveStatusKind, text: string): void {
   saveStatus.value = { kind, text }
   clearTimeout(hideStatusTimer)
   hideStatusTimer = setTimeout(() => (saveStatus.value = { kind: '', text: '' }), 4000)
@@ -47,7 +48,7 @@ function showSaveStatus(kind, text) {
 
 // Saves the active playbook's .xml into the chosen local folder.
 // pickFolder = true ("Change folder") asks for a new folder first.
-async function saveToLocalFolder(pickFolder = false) {
+async function saveToLocalFolder(pickFolder = false): Promise<void> {
   isSaving.value = true
   try {
     const { fileName, folderName } = await playbooksStore.saveActiveToLocalFolder({ pickFolder })
@@ -85,7 +86,7 @@ async function saveToLocalFolder(pickFolder = false) {
           id="playbookSwitcher"
           class="playbook-switcher__select"
           :value="playbooksStore.activePlaybookId.value"
-          @change="playbooksStore.setActivePlaybookId($event.target.value)"
+          @change="playbooksStore.setActivePlaybookId(($event.target as HTMLSelectElement).value)"
         >
           <option v-for="playbook in playbooksStore.playbooks.value" :key="playbook.id" :value="playbook.id">
             {{ playbook.playbookName || '(untitled playbook)' }}

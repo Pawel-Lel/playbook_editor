@@ -134,14 +134,14 @@ a single blank "Untitled playbook".
 ```
 src/
   store/
-    playbooks.js          # Core store: collection of playbooks + active selection,
+    playbooks.ts          # Core store: collection of playbooks + active selection,
                            # localStorage persistence + cloud sync registration
-    steps.js               # Steps CRUD, scoped to the active playbook (thin view)
-    playbook.js            # Playbook-config CRUD, scoped to the active playbook (thin view)
-    cloudSync.js          # GCS bucket config, auth status, load/save orchestration
+    steps.ts               # Steps CRUD, scoped to the active playbook (thin view)
+    playbook.ts            # Playbook-config CRUD, scoped to the active playbook (thin view)
+    cloudSync.ts          # GCS bucket config, auth status, load/save orchestration
   services/
-    gcsClient.js          # Google Identity Services auth + GCS JSON API (fetch)
-    localFolder.js        # File System Access API: pick/remember a save folder, write .xml files
+    gcsClient.ts          # Google Identity Services auth + GCS JSON API (fetch)
+    localFolder.ts        # File System Access API: pick/remember a save folder, write .xml files
   components/
     GuidelinesEditor.vue      # POLICY CRUD (text / structured / raw shapes), both layouts
     EscalationsEditor.vue     # ESCALATION CRUD, both layouts
@@ -158,10 +158,13 @@ src/
     FlowMapView.vue      # SVG relationship diagram (active playbook only)
     PlaybookSettingsView.vue  # Setup/guidelines/constraints/escalations
     CloudSyncView.vue    # Google Cloud Storage bucket config + load/save
-  utils/xmlExport.js     # Serializes the store back into LLM_INSTRUCTIONS XML
-  router/index.js
+  utils/xmlExport.ts     # Serializes the store back into LLM_INSTRUCTIONS XML
+  utils/xmlImport.ts     # Parses LLM_INSTRUCTIONS XML into the app's playbook shape
+  types.ts               # Shared data types (playbook, step, classification, ...)
+  env.d.ts               # Global type declarations (runtime config, Google, File System Access)
+  router/index.ts
   App.vue
-  main.js
+  main.ts
 ```
 
 ## Local development
@@ -171,6 +174,7 @@ Requires Node.js 18+.
 ```bash
 npm install
 npm run dev
+npm run typecheck   # optional: check types (also runs as part of `npm run build`)
 ```
 
 This starts a local dev server (default `http://localhost:5173`) with hot
@@ -214,7 +218,7 @@ gcloud run deploy playbook-editor \
 
 These are read when the container **starts**: `deploy/docker-entrypoint.sh`
 writes them into `/config.js`, which `index.html` loads before the app
-(`src/config/runtimeConfig.js` reads it). Change them without rebuilding:
+(`src/config/runtimeConfig.ts` reads it). Change them without rebuilding:
 
 ```bash
 gcloud run services update playbook-editor --region europe-west2 \
@@ -252,7 +256,7 @@ config is required thanks to hash history.
 
 ## Data model
 
-A playbook (one entry in `playbooks.js`'s `playbooks` array):
+A playbook (one entry in `playbooks.ts`'s `playbooks` array):
 
 ```js
 {
@@ -293,7 +297,7 @@ than one form trying to cover both):
   is a `{ prompt, action }` pair, and `action` is the *same shape* a
   classification's action uses (`toolType`/`toolId`/`flowId`/
   `parameterName`/`parameterValue` — see `buildActionElement` in
-  `xmlExport.js`, reused directly here rather than duplicated). So the tool
+  `xmlExport.ts`, reused directly here rather than duplicated). So the tool
   actually invoked on a no-match/no-input reprompt (which tool, which
   parameter) is genuine per-playbook data, editable the same way a
   classification's action is — not boilerplate baked into the exporter.
@@ -337,7 +341,7 @@ exporting `Triage.xml` reproduces it exactly (apart from whitespace):
   XML bodies are de-indented so repeated import → export cycles are stable.
 
 Older saved data is upgraded in place on load (`normalizeRecord` in
-`store/playbooks.js`).
+`store/playbooks.ts`).
 
 A few structural quirks are normalized transparently:
 - An `<ESCALATION>` may use either `condition="..."` or `type="..."` for
@@ -402,7 +406,7 @@ The `guidelines` policies (a simple one-liner, a trigger/action pair, or a
 `rawXml` escape hatch for structurally complex policies like
 `AGENT_ESCALATION_OVERRIDE`), `dialogConstraints`, `clarificationRules`, and
 `escalations` shapes are exactly what `PlaybookSettingsView.vue` edits and
-`xmlExport.js` serializes.
+`xmlExport.ts` serializes.
 
 Some classifications point at IDs that aren't defined as their own
 `<DIALOG_STEP>` in the playbook (e.g. `Fulfilment_Escalation`, or the
@@ -422,19 +426,19 @@ array of playbooks (each with its own settings and steps) plus which one is
 active. This is always on and needs no setup, so the app works standalone
 with zero configuration.
 
-`src/store/steps.js` and `src/store/playbook.js` no longer hold any state of
+`src/store/steps.ts` and `src/store/playbook.ts` no longer hold any state of
 their own — they're thin, scoped views over `getActivePlaybookRecord()`
-from `store/playbooks.js`, exposing the same CRUD API as before
+from `store/playbooks.ts`, exposing the same CRUD API as before
 (`createStep`, `updateStep`, `deleteStep`, `getStep`, `addItem`,
 `updateItem`, `removeItem`, ...) so no other view code had to change when
-multi-playbook support was added. `playbook.js` also exposes
+multi-playbook support was added. `playbook.ts` also exposes
 `toExportPayload()` — the single source of truth for "every field
 `buildLlmInstructionsXml()` needs from the playbook side" — which every
 export call-site (Steps list, Flow map, Playbook settings) calls rather
 than re-listing fields by hand, so a new field added there can't be
 silently missed at some call sites but not others. If you need a durable
 backend beyond Cloud Storage (a real API, Firestore, etc.),
-`store/playbooks.js` is the one file to point elsewhere — everything
+`store/playbooks.ts` is the one file to point elsewhere — everything
 downstream keeps working unchanged.
 
 ### Cloud Storage sync (optional)
@@ -498,26 +502,26 @@ One-time setup (also shown inline on the Cloud sync page):
 
 The implementation lives in three small, dependency-free files:
 
-- `src/services/gcsClient.js` — loads Google Identity Services on demand,
+- `src/services/gcsClient.ts` — loads Google Identity Services on demand,
   requests a short-lived OAuth access token (scope `devstorage.read_write`),
   and lists/reads/writes objects via the plain GCS JSON API
   (`storage.googleapis.com`) using `fetch`. `listObjects()` paginates
   automatically and supports GCS's `delimiter` param so a folder prefix only
   picks up files directly under it, not in deeper "subfolders".
-- `src/utils/xmlImport.js` — parses one `<LLM_INSTRUCTIONS>` XML document
+- `src/utils/xmlImport.ts` — parses one `<LLM_INSTRUCTIONS>` XML document
   (using the browser's native `DOMParser`) back into the app's playbook
-  shape, mirroring `xmlExport.js` in reverse: policies, constraints,
+  shape, mirroring `xmlExport.ts` in reverse: policies, constraints,
   escalations (including recovering the `note` field from its `<!-- Note:
   ... -->` comment), and every step's classifications, actions (including
   the `Internal_State_Update` self-closing attribute form), and comments
   (walking backward through preceding sibling comment nodes, the reverse of
   how the exporter stacks multiple `<!-- --> `blocks). Also accepts a bare
   `<DIAGNOSTIC_FLOWS>` root as a steps-only file.
-- `src/store/cloudSync.js` — reads the bucket/prefix/Client ID from
-  `src/config/runtimeConfig.js`, keeps the auto-sync preference in
+- `src/store/cloudSync.ts` — reads the bucket/prefix/Client ID from
+  `src/config/runtimeConfig.ts`, keeps the auto-sync preference in
   `localStorage` (under `playbook-editor:cloud-sync-config:v1`), auth/sync status, and
-  orchestrates loading/saving. It never imports `store/playbooks.js`
-  directly — `playbooks.js` registers itself once at module load
+  orchestrates loading/saving. It never imports `store/playbooks.ts`
+  directly — `playbooks.ts` registers itself once at module load
   (`registerSyncTarget('playbooks', { loadAll, saveAll, saveOne })`),
   keeping the dependency one-directional.
 # playbook_editor

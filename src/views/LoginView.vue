@@ -1,10 +1,10 @@
-<script setup>
+<script setup lang="ts">
 // LoginView — the page everyone who isn't signed in sees (/login).
 // onMounted(callback): runs callback once, right after this page appears.
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useCloudSyncStore } from '../store/cloudSync.js'
-import { prepareSignIn } from '../services/gcsClient.js'
+import { useCloudSyncStore } from '../store/cloudSync'
+import { prepareSignIn } from '../services/gcsClient'
 
 const route = useRoute()
 const router = useRouter()
@@ -21,7 +21,7 @@ onMounted(() => {
   })
 })
 
-async function signIn() {
+async function signIn(): Promise<void> {
   isSigningIn.value = true
   signInError.value = ''
   try {

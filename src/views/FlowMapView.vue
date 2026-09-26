@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // FlowMapView — draws the active playbook as a node/edge diagram (SVG).
 //
 // Vue concepts used in this file:
@@ -12,11 +12,37 @@
 //    caches the result in between. Also read via `.value` in script code.
 import { computed, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { useStepsStore } from '../store/steps.js'
-import { usePlaybookStore } from '../store/playbook.js'
-import { usePlaybooksStore } from '../store/playbooks.js'
-import { buildLlmInstructionsXml, exportFileName } from '../utils/xmlExport.js'
+import { useStepsStore } from '../store/steps'
+import { usePlaybookStore } from '../store/playbook'
+import { usePlaybooksStore } from '../store/playbooks'
+import { buildLlmInstructionsXml, exportFileName } from '../utils/xmlExport'
 import ExportXmlModal from '../components/ExportXmlModal.vue'
+import type { PlaybookRecord, TargetKind } from '../types'
+
+// A box in the diagram. Step graphs use Target kinds; the routing graph
+// adds its own ('root', 'category', 'playbook', 'unknown-playbook').
+interface FlowNode {
+  id: string
+  kind: TargetKind | 'root' | 'category' | 'playbook' | 'unknown-playbook'
+  label: string
+  displayId?: string // shown instead of id when set
+  targetPlaybookId?: string | null // for 'playbook' nodes
+}
+
+// The same node plus where the layout placed it.
+interface PositionedNode extends FlowNode {
+  x: number
+  y: number
+}
+
+// An arrow from one node to another.
+interface FlowEdge {
+  id: string
+  from: string
+  to: string
+  label: string
+  isEscalation: boolean // drawn dashed
+}
 
 // useRouter() gives access to the app's router, used to change pages in code.
 const router = useRouter()
@@ -42,7 +68,7 @@ const COLUMN_GAP = 130 // horizontal space between columns of nodes
 const ROW_GAP = 34 // vertical space between nodes in one column
 
 // Id of the node the person clicked on (null = nothing selected).
-const selectedNodeId = ref(null)
+const selectedNodeId = ref<string | null>(null)
 // 1 = 100%. Changed with the +/− buttons, see setZoomLevel().
 const zoomLevel = ref(1)
 
@@ -58,13 +84,13 @@ const isRoutingPlaybook = computed(
 // edges are the classifications' "next step" links.
 
 const stepNodesById = computed(() => {
-  const nodeMap = new Map()
+  const nodeMap = new Map<string, FlowNode>()
   stepsStore.allReferencedTargets.value.forEach((target) => nodeMap.set(target.id, target))
   return nodeMap
 })
 
 const stepEdges = computed(() => {
-  const edgeList = []
+  const edgeList: FlowEdge[] = []
   stepsStore.steps.value.forEach((step) => {
     step.classifications.forEach((classification) => {
       if (!classification.nextStep) return
@@ -88,13 +114,13 @@ const stepEdges = computed(() => {
 // that category routes to.
 
 // Pulls "Water Taps" out of an action like "${PLAYBOOK:Water Taps}".
-function extractPlaybookTarget(actionText) {
+function extractPlaybookTarget(actionText: string): string {
   const match = String(actionText || '').match(/\$\{PLAYBOOK:([^}]+)\}/)
   return match ? match[1].trim() : ''
 }
 
 // Finds a loaded playbook by name (case-insensitive), or null.
-function findTargetPlaybook(playbookName) {
+function findTargetPlaybook(playbookName: string): PlaybookRecord | null {
   const wantedName = playbookName.trim().toLowerCase()
   return (
     playbooksStore.playbooks.value.find(
@@ -106,7 +132,7 @@ function findTargetPlaybook(playbookName) {
 const ROOT_NODE_ID = '__playbook_root__'
 
 const routingNodesById = computed(() => {
-  const nodeMap = new Map()
+  const nodeMap = new Map<string, FlowNode>()
   nodeMap.set(ROOT_NODE_ID, {
     id: ROOT_NODE_ID,
     displayId: playbookStore.playbookName.value || 'This playbook',
@@ -140,7 +166,7 @@ const routingNodesById = computed(() => {
 })
 
 const routingEdges = computed(() => {
-  const edgeList = []
+  const edgeList: FlowEdge[] = []
   playbookStore.routingCategories.value.forEach((category) => {
     const categoryNodeId = `cat:${category.id}`
     edgeList.push({ id: `e-root-${category.id}`, from: ROOT_NODE_ID, to: categoryNodeId, label: '', isEscalation: false })
@@ -160,7 +186,7 @@ const routingEdges = computed(() => {
 })
 
 // The trigger phrases of the category behind a "cat:..." node id.
-function categoryTriggersFor(categoryNodeId) {
+function categoryTriggersFor(categoryNodeId: string): string {
   const category = playbookStore.routingCategories.value.find(
     (candidate) => `cat:${candidate.id}` === categoryNodeId
   )
@@ -186,7 +212,7 @@ const routingSummary = computed(() => {
   })
 })
 
-function switchToPlaybookId(playbookId) {
+function switchToPlaybookId(playbookId: string): void {
   playbooksStore.setActivePlaybookId(playbookId)
   selectedNodeId.value = null
 }
@@ -217,15 +243,15 @@ const svgAriaLabel = computed(() =>
 // so entry steps sit in column 0 and everything flows left to right.
 const layout = computed(() => {
   const nodeIds = Array.from(nodesById.value.keys())
-  const incomingByNodeId = new Map(nodeIds.map((nodeId) => [nodeId, []]))
+  const incomingByNodeId = new Map<string, string[]>(nodeIds.map((nodeId) => [nodeId, []]))
   edges.value.forEach((edge) => {
     if (incomingByNodeId.has(edge.to)) incomingByNodeId.get(edge.to).push(edge.from)
   })
 
-  const levelByNodeId = new Map()
-  const nodesBeingVisited = new Set() // detects loops (A → B → A)
+  const levelByNodeId = new Map<string, number>()
+  const nodesBeingVisited = new Set<string>() // detects loops (A → B → A)
 
-  function levelOf(nodeId) {
+  function levelOf(nodeId: string): number {
     if (levelByNodeId.has(nodeId)) return levelByNodeId.get(nodeId)
     if (nodesBeingVisited.has(nodeId)) return 0 // cycle guard
     nodesBeingVisited.add(nodeId)
@@ -242,7 +268,7 @@ const layout = computed(() => {
   nodeIds.forEach((nodeId) => levelOf(nodeId))
 
   // Group node ids into columns by level.
-  const nodeIdsByColumn = new Map()
+  const nodeIdsByColumn = new Map<number, string[]>()
   nodeIds.forEach((nodeId) => {
     const nodeLevel = levelByNodeId.get(nodeId)
     if (!nodeIdsByColumn.has(nodeLevel)) nodeIdsByColumn.set(nodeLevel, [])
@@ -250,7 +276,7 @@ const layout = computed(() => {
   })
 
   // Turn column/row numbers into x/y coordinates.
-  const positionByNodeId = new Map()
+  const positionByNodeId = new Map<string, { x: number; y: number }>()
   const deepestLevel = Math.max(0, ...Array.from(nodeIdsByColumn.keys()))
   let tallestColumnSize = 0
 
@@ -272,25 +298,25 @@ const layout = computed(() => {
 })
 
 // Every node with its x/y position merged in — what the template draws.
-const positionedNodes = computed(() =>
+const positionedNodes = computed<PositionedNode[]>(() =>
   Array.from(nodesById.value.values()).map((node) => {
     const position = layout.value.positions.get(node.id) || { x: 0, y: 0 }
     return { ...node, ...position }
   })
 )
 
-function positionedNodeById(nodeId) {
+function positionedNodeById(nodeId: string): PositionedNode | undefined {
   return positionedNodes.value.find((node) => node.id === nodeId)
 }
 
 // The node's title, shortened so it fits inside the box.
-function nodeDisplayId(node) {
+function nodeDisplayId(node: FlowNode): string {
   const text = node.displayId || node.id
   return text.length > 26 ? text.slice(0, 25) + '…' : text
 }
 
 // Hover text: a category's triggers, or a step's comment.
-function nodeTooltip(nodeId) {
+function nodeTooltip(nodeId: string): string {
   if (isRoutingPlaybook.value) {
     return categoryTriggersFor(nodeId)
   }
@@ -299,7 +325,7 @@ function nodeTooltip(nodeId) {
 
 // SVG path data for a smooth curve from the right edge of the source node
 // to the left edge of the target node (a cubic Bézier: "M start C ...").
-function edgePath(edge) {
+function edgePath(edge: FlowEdge): string {
   const fromNode = positionedNodeById(edge.from)
   const toNode = positionedNodeById(edge.to)
   if (!fromNode || !toNode) return ''
@@ -312,7 +338,7 @@ function edgePath(edge) {
 }
 
 // Where to put an edge's label: halfway between its two nodes.
-function edgeMidpoint(edge) {
+function edgeMidpoint(edge: FlowEdge): { x: number; y: number } {
   const fromNode = positionedNodeById(edge.from)
   const toNode = positionedNodeById(edge.to)
   if (!fromNode || !toNode) return { x: 0, y: 0 }
@@ -333,10 +359,10 @@ const edgeIdsTouchingSelection = computed(() => {
   )
 })
 
-function isEdgeDimmed(edge) {
-  return selectedNodeId.value && !edgeIdsTouchingSelection.value.has(edge.id)
+function isEdgeDimmed(edge: FlowEdge): boolean {
+  return !!selectedNodeId.value && !edgeIdsTouchingSelection.value.has(edge.id)
 }
-function isNodeDimmed(node) {
+function isNodeDimmed(node: FlowNode): boolean {
   if (!selectedNodeId.value) return false
   if (node.id === selectedNodeId.value) return false
   return !edges.value.some(
@@ -347,7 +373,7 @@ function isNodeDimmed(node) {
 }
 
 // Clicking the selected node again deselects it.
-function selectNode(nodeId) {
+function selectNode(nodeId: string): void {
   selectedNodeId.value = selectedNodeId.value === nodeId ? null : nodeId
 }
 
@@ -355,13 +381,13 @@ function selectNode(nodeId) {
 const selectedIncomingEdges = computed(() => edges.value.filter((edge) => edge.to === selectedNodeId.value))
 const selectedOutgoingEdges = computed(() => edges.value.filter((edge) => edge.from === selectedNodeId.value))
 
-function goToStep(stepId) {
+function goToStep(stepId: string): void {
   if (nodesById.value.get(stepId)?.kind === 'step') {
     router.push(`/steps/${encodeURIComponent(stepId)}`)
   }
 }
 
-function switchToTargetPlaybook(nodeId) {
+function switchToTargetPlaybook(nodeId: string): void {
   const node = nodesById.value.get(nodeId)
   if (node?.kind === 'playbook' && node.targetPlaybookId) {
     playbooksStore.setActivePlaybookId(node.targetPlaybookId)
@@ -370,7 +396,7 @@ function switchToTargetPlaybook(nodeId) {
 }
 
 // Double-click: open a step for editing, or switch to a target playbook.
-function handleNodeActivate(nodeId) {
+function handleNodeActivate(nodeId: string): void {
   const node = nodesById.value.get(nodeId)
   if (!node) return
   if (node.kind === 'step') {
@@ -381,7 +407,7 @@ function handleNodeActivate(nodeId) {
 }
 
 // CSS class for the colored badge of each node kind (see main.css).
-function badgeClass(nodeKind) {
+function badgeClass(nodeKind: FlowNode['kind'] | undefined): string {
   return {
     step: 'badge-step',
     terminal: 'badge-terminal',
@@ -396,7 +422,7 @@ function badgeClass(nodeKind) {
 }
 
 // Keeps the zoom between 40% and 140%.
-function setZoomLevel(newZoomLevel) {
+function setZoomLevel(newZoomLevel: number): void {
   zoomLevel.value = Math.min(1.4, Math.max(0.4, newZoomLevel))
 }
 </script>

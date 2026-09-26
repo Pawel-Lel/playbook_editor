@@ -1,12 +1,12 @@
-<script setup>
+<script setup lang="ts">
 // StepForm — the form for creating or editing one dialog step. Used by
 // both StepCreateView (mode 'create') and StepEditView (mode 'edit').
 //
 // Vue concepts used in this file:
-//  - defineProps({...}): declares the inputs ("props") the parent passes
-//    in, e.g. <StepForm :initial="step" mode="edit" />. Props are
+//  - defineProps<{...}>(): declares the inputs ("props") the parent passes
+//    in, e.g. <StepForm :initial-step="step" mode="edit" />. Props are
 //    read-only for this component.
-//  - defineEmits([...]): declares the events this component sends up to
+//  - defineEmits<{...}>(): declares the events this component sends up to
 //    its parent; the parent listens with @submit="...", @cancel="...".
 //  - reactive(object): an object Vue watches — the form fields below.
 //    `v-model="stepForm.topic"` in the template keeps an input and that
@@ -14,15 +14,26 @@
 //  - watch(source, callback): runs callback whenever `source` changes.
 //  - computed(() => ...): a value derived from other reactive data.
 import { reactive, watch, computed } from 'vue'
+import type { Action, Classification, Step, Target } from '../types'
 
-const props = defineProps({
-  initialStep: { type: Object, default: null }, // the step being edited (null when creating)
-  mode: { type: String, default: 'create' }, // 'create' | 'edit'
-  allTargets: { type: Array, default: () => [] }, // [{id, kind, label}] — suggestions for "Next step"
-  errorMessage: { type: String, default: '' }
-})
+// withDefaults(defineProps<{...}>(), {...}): the props and their types,
+// then the default value for each optional (`?`) one.
+const props = withDefaults(
+  defineProps<{
+    initialStep?: Step | null // the step being edited (null when creating)
+    mode?: 'create' | 'edit'
+    allTargets?: Target[] // suggestions for "Next step"
+    errorMessage?: string
+  }>(),
+  { initialStep: null, mode: 'create', allTargets: () => [], errorMessage: '' }
+)
 
-const emit = defineEmits(['submit', 'cancel', 'delete'])
+// Each event name, with the values it sends in [brackets].
+const emit = defineEmits<{
+  submit: [submittedStep: Step]
+  cancel: []
+  delete: []
+}>()
 
 // Choices offered in the "Prompt type" dropdown and "Tool type" suggestions.
 const PROMPT_TYPES = ['InitialQuery', 'ConfirmationQuery', 'InternalProcessing']
@@ -30,11 +41,11 @@ const ACTION_TYPES = ['Flow_Invocation', 'RAG_Retrieval', 'Tool_Invocation', 'In
 
 // A random, temporary id — only needed so v-for's :key stays stable while
 // editing; the steps store gives items their permanent ids on save.
-function temporaryId(prefix) {
+function temporaryId(prefix: string): string {
   return `${prefix}${Math.random().toString(36).slice(2, 9)}`
 }
 
-function blankAction() {
+function blankAction(): Action {
   return {
     id: temporaryId('tmpa_'),
     toolType: '',
@@ -45,7 +56,7 @@ function blankAction() {
   }
 }
 
-function blankClassification() {
+function blankClassification(): Classification {
   return {
     id: temporaryId('tmp_'),
     classificationId: '',
@@ -61,8 +72,8 @@ function blankClassification() {
 // Builds the form's data from an existing step (or blank, when creating).
 // Classifications and actions are copied ({ ...x }) so typing in the form
 // doesn't change the saved step until the person clicks Save.
-function makeFormState(sourceStep) {
-  return reactive({
+function makeFormState(sourceStep: Step | null): Step {
+  return reactive<Step>({
     id: sourceStep?.id || '',
     topic: sourceStep?.topic || '',
     issueSummary: sourceStep?.issueSummary || '',
@@ -97,15 +108,15 @@ watch(
 function addClassification() {
   stepForm.classifications.push(blankClassification())
 }
-function removeClassification(classificationIndex) {
+function removeClassification(classificationIndex: number): void {
   stepForm.classifications.splice(classificationIndex, 1)
   // Always keep at least one (empty) classification row on screen.
   if (stepForm.classifications.length === 0) stepForm.classifications.push(blankClassification())
 }
-function addAction(classification) {
+function addAction(classification: Classification): void {
   classification.actions.push(blankAction())
 }
-function removeAction(classification, actionIndex) {
+function removeAction(classification: Classification, actionIndex: number): void {
   classification.actions.splice(actionIndex, 1)
 }
 

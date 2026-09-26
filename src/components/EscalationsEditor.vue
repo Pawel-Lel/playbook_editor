@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // CRUD for <ESCALATION_HANDLING><ESCALATION> entries, shared by both
 // Playbook Settings layouts. Every part of the exported element is
 // editable: the condition/type attribute, the comment above it (e.g.
@@ -6,7 +6,7 @@
 // param_escalation_reason and param_playbook_name, the "Note:" comment and
 // the INVOKE_FLOW target. The slot renders below the list (Triage uses it
 // for the EVENT_HANDLERS reprompts, which live in the same XML section).
-import { usePlaybookStore } from '../store/playbook.js'
+import { usePlaybookStore } from '../store/playbook'
 import ItemToolbar from './ItemToolbar.vue'
 
 const playbookStore = usePlaybookStore()

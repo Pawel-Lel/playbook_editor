@@ -1,4 +1,4 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
+import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import StepsListView from '../views/StepsListView.vue'
 import StepEditView from '../views/StepEditView.vue'
 import StepCreateView from '../views/StepCreateView.vue'
@@ -7,11 +7,11 @@ import PlaybookSettingsView from '../views/PlaybookSettingsView.vue'
 import CloudSyncView from '../views/CloudSyncView.vue'
 import PlaybooksView from '../views/PlaybooksView.vue'
 import LoginView from '../views/LoginView.vue'
-import { useCloudSyncStore } from '../store/cloudSync.js'
+import { useCloudSyncStore } from '../store/cloudSync'
 
 // Which component (page) is shown for which URL. `props: true` passes the
 // :id part of the URL to the component as a prop named `id`.
-const routes = [
+const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/steps' },
   { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
   { path: '/playbooks', name: 'playbooks', component: PlaybooksView },
@@ -41,7 +41,9 @@ router.beforeEach((targetRoute) => {
   const { signedIn } = useCloudSyncStore()
   if (targetRoute.meta.public) {
     // Already signed in? Skip the login page and go where they were headed.
-    return signedIn.value && targetRoute.name === 'login' ? (targetRoute.query.redirect || '/') : true
+    // (?redirect= can appear twice in a URL, making it a list — only use a single value.)
+    const redirectPath = typeof targetRoute.query.redirect === 'string' ? targetRoute.query.redirect : '/'
+    return signedIn.value && targetRoute.name === 'login' ? redirectPath : true
   }
   if (!signedIn.value) {
     return { name: 'login', query: targetRoute.fullPath === '/' ? {} : { redirect: targetRoute.fullPath } }

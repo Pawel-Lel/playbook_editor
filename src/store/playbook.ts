@@ -8,18 +8,22 @@
 // `v-model` in a template) runs `set`. That lets a view bind an input
 // straight to a field of the active playbook.
 import { computed } from 'vue'
-import { getActivePlaybookRecord } from './playbooks.js'
-import { blankGuideline } from '../utils/xmlImport.js'
+import { getActivePlaybookRecord } from './playbooks'
+import { blankGuideline } from '../utils/xmlImport'
+import type { ActionStep, PlaybookRecord, PlaybookSettings, SectionKey, Setup } from '../types'
+
+/** The editable lists of a playbook — the `sectionName` addItem() etc. accept. */
+export type ListSection = 'guidelines' | 'dialogConstraints' | 'clarificationRules' | 'escalations' | 'routingCategories'
 
 // Unique ids for new list items: a prefix plus an ever-increasing number.
 let lastGeneratedNumber = Date.now()
-function nextItemId(prefix) {
+function nextItemId(prefix: string): string {
   lastGeneratedNumber += 1
   return `${prefix}${lastGeneratedNumber}`
 }
 
 // For each editable list: a function returning a new, empty item.
-const LIST_ITEM_DEFAULTS = {
+const LIST_ITEM_DEFAULTS: Record<ListSection, () => { id: string }> = {
   guidelines: () => blankGuideline(),
   dialogConstraints: () => ({ id: '', type: '', text: '', critical: '', action: '' }),
   clarificationRules: () => ({ id: '', attrName: 'condition', condition: '', prompt: '', instruction: '', comment: '' }),
@@ -39,7 +43,7 @@ const LIST_ITEM_DEFAULTS = {
 }
 
 // Id prefix per list, e.g. a new escalation gets an id like "esc1712345678".
-const LIST_ID_PREFIX = {
+const LIST_ID_PREFIX: Record<ListSection, string> = {
   guidelines: 'g',
   dialogConstraints: 'dc',
   clarificationRules: 'cr',
@@ -52,9 +56,9 @@ const LIST_ID_PREFIX = {
 // usePlaybooksStore().
 export function usePlaybookStore() {
   // A function (not a variable) so it always returns the CURRENT active playbook.
-  const activeRecord = () => getActivePlaybookRecord()
+  const activeRecord = (): PlaybookRecord => getActivePlaybookRecord()
 
-  const playbookName = computed({
+  const playbookName = computed<string>({
     get: () => activeRecord().playbookName,
     set: (newName) => {
       activeRecord().playbookName = newName
@@ -71,7 +75,7 @@ export function usePlaybookStore() {
   // A router/triage-style playbook's optional shared clarification
   // condition — exposed as a writable computed the same way playbookName
   // is, so views can v-model it directly.
-  const clarificationRulesCondition = computed({
+  const clarificationRulesCondition = computed<string>({
     get: () => activeRecord().clarificationRulesCondition || '',
     set: (newCondition) => {
       activeRecord().clarificationRulesCondition = newCondition
@@ -89,7 +93,7 @@ export function usePlaybookStore() {
   // Document layout: which top-level sections are written and in what
   // order, the <!-- ... --> comment above each, and whether the file starts
   // with an <?xml ...?> declaration (Triage.xml doesn't).
-  const sectionOrder = computed({
+  const sectionOrder = computed<SectionKey[]>({
     get: () => activeRecord().sectionOrder || [],
     set: (newOrder) => {
       activeRecord().sectionOrder = newOrder
@@ -99,7 +103,7 @@ export function usePlaybookStore() {
     if (!activeRecord().sectionComments) activeRecord().sectionComments = {}
     return activeRecord().sectionComments
   })
-  const includeXmlDeclaration = computed({
+  const includeXmlDeclaration = computed<boolean>({
     get: () => activeRecord().includeXmlDeclaration !== false,
     set: (shouldInclude) => {
       activeRecord().includeXmlDeclaration = !!shouldInclude
@@ -108,16 +112,16 @@ export function usePlaybookStore() {
 
   // Guideline <ACTION> steps (<SET_PARAMETER> / <INVOKE_FLOW>) — CRUD within
   // one policy, e.g. CANCELLATION_OVERRIDE.
-  function addActionStep(guidelineId, actionKind = 'SET_PARAMETER') {
+  function addActionStep(guidelineId: string, actionKind = 'SET_PARAMETER'): ActionStep {
     const guideline = activeRecord().guidelines.find((candidate) => candidate.id === guidelineId)
     if (!guideline) throw new Error(`Guideline "${guidelineId}" not found`)
     if (!Array.isArray(guideline.actionSteps)) guideline.actionSteps = []
-    const newActionStep = { id: nextItemId('as'), kind: actionKind, name: '', value: '' }
+    const newActionStep: ActionStep = { id: nextItemId('as'), kind: actionKind, name: '', value: '' }
     guideline.actionSteps.push(newActionStep)
     return newActionStep
   }
 
-  function removeActionStep(guidelineId, actionStepId) {
+  function removeActionStep(guidelineId: string, actionStepId: string): void {
     const guideline = activeRecord().guidelines.find((candidate) => candidate.id === guidelineId)
     if (!guideline?.actionSteps) return
     const actionStepIndex = guideline.actionSteps.findIndex((actionStep) => actionStep.id === actionStepId)
@@ -126,8 +130,8 @@ export function usePlaybookStore() {
 
   // Reorders any list section (guidelines, escalations, rules, categories)
   // — order is significant in the XML. `direction` is -1 (up) or +1 (down).
-  function moveItem(sectionName, itemId, direction) {
-    const sectionList = activeRecord()[sectionName]
+  function moveItem(sectionName: ListSection, itemId: string, direction: number): void {
+    const sectionList: { id: string }[] = activeRecord()[sectionName]
     if (!Array.isArray(sectionList)) return
     const currentIndex = sectionList.findIndex((item) => item.id === itemId)
     const newIndex = currentIndex + direction
@@ -136,7 +140,7 @@ export function usePlaybookStore() {
     sectionList.splice(newIndex, 0, movedItem) // ...and put it back one place over
   }
 
-  function updateSetup(newSetup) {
+  function updateSetup(newSetup: Partial<Setup>): void {
     activeRecord().setup.contextInstruction = newSetup.contextInstruction || ''
     activeRecord().setup.contextConstraint = newSetup.contextConstraint || ''
     activeRecord().setup.role = newSetup.role || ''
@@ -144,30 +148,30 @@ export function usePlaybookStore() {
   }
 
   // sectionName is one of the LIST_ITEM_DEFAULTS keys, e.g. 'escalations'.
-  function addItem(sectionName, initialFields = {}) {
+  function addItem(sectionName: ListSection, initialFields: Record<string, unknown> = {}) {
     const createBlankItem = LIST_ITEM_DEFAULTS[sectionName]
     if (!createBlankItem) throw new Error(`Unknown playbook section "${sectionName}"`)
     const newItem = { ...createBlankItem(), ...initialFields, id: nextItemId(LIST_ID_PREFIX[sectionName]) }
-    activeRecord()[sectionName].push(newItem)
+    ;(activeRecord()[sectionName] as unknown[]).push(newItem)
     return newItem
   }
 
-  function updateItem(sectionName, itemId, updatedFields) {
-    const sectionList = activeRecord()[sectionName]
+  function updateItem(sectionName: ListSection, itemId: string, updatedFields: Record<string, unknown>): void {
+    const sectionList: { id: string }[] = activeRecord()[sectionName]
     if (!sectionList) throw new Error(`Unknown playbook section "${sectionName}"`)
     const itemIndex = sectionList.findIndex((item) => item.id === itemId)
     if (itemIndex === -1) throw new Error(`Item "${itemId}" not found in "${sectionName}"`)
     sectionList.splice(itemIndex, 1, { ...updatedFields, id: itemId })
   }
 
-  function removeItem(sectionName, itemId) {
-    const sectionList = activeRecord()[sectionName]
+  function removeItem(sectionName: ListSection, itemId: string): void {
+    const sectionList: { id: string }[] = activeRecord()[sectionName]
     if (!sectionList) return
     const itemIndex = sectionList.findIndex((item) => item.id === itemId)
     if (itemIndex !== -1) sectionList.splice(itemIndex, 1)
   }
 
-  function clearSettings() {
+  function clearSettings(): void {
     const record = activeRecord()
     record.setup.contextInstruction = ''
     record.setup.contextConstraint = ''
@@ -190,7 +194,7 @@ export function usePlaybookStore() {
   // from the playbook side" — every export call-site should build its
   // payload through this rather than listing fields by hand, so a new field
   // added here can't be silently missed at some (but not all) call sites.
-  function toExportPayload() {
+  function toExportPayload(): PlaybookSettings {
     return {
       playbookName: playbookName.value,
       setup: setup.value,

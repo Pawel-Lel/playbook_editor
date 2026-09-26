@@ -11,13 +11,13 @@ const DB_NAME = 'playbook-editor'
 const DB_STORE = 'handles'
 const DIR_KEY = 'local-save-dir'
 
-export function isSupported() {
+export function isSupported(): boolean {
   return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
 }
 
 // IndexedDB is the browser's built-in database; unlike localStorage it can
 // store a folder handle. These two helpers open it and run one operation.
-function openDatabase() {
+function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const openRequest = indexedDB.open(DB_NAME, 1)
     openRequest.onupgradeneeded = () => openRequest.result.createObjectStore(DB_STORE)
@@ -27,10 +27,13 @@ function openDatabase() {
 }
 
 // Runs `operation(objectStore)` in a transaction and resolves with its result.
-async function runInHandleStore(transactionMode, operation) {
+async function runInHandleStore<Result>(
+  transactionMode: IDBTransactionMode,
+  operation: (handleStore: IDBObjectStore) => IDBRequest<Result>
+): Promise<Result> {
   const database = await openDatabase()
   try {
-    return await new Promise((resolve, reject) => {
+    return await new Promise<Result>((resolve, reject) => {
       const transaction = database.transaction(DB_STORE, transactionMode)
       const operationRequest = operation(transaction.objectStore(DB_STORE))
       transaction.oncomplete = () => resolve(operationRequest?.result)
@@ -42,14 +45,13 @@ async function runInHandleStore(transactionMode, operation) {
 }
 
 // The chosen folder, kept in memory after the first lookup.
-let rememberedFolderHandle = null
+let rememberedFolderHandle: FileSystemDirectoryHandle | null = null
 
 /**
  * The previously chosen folder, if any (from memory or IndexedDB). Doesn't
  * check permission — that happens on write, inside a user gesture.
- * @returns {Promise<FileSystemDirectoryHandle|null>}
  */
-export async function getRememberedFolder() {
+export async function getRememberedFolder(): Promise<FileSystemDirectoryHandle | null> {
   if (rememberedFolderHandle || !isSupported()) return rememberedFolderHandle
   try {
     rememberedFolderHandle = (await runInHandleStore('readonly', (handleStore) => handleStore.get(DIR_KEY))) || null
@@ -62,9 +64,8 @@ export async function getRememberedFolder() {
 /**
  * Prompts for a folder and remembers it. Throws an AbortError if the
  * person cancels the picker.
- * @returns {Promise<FileSystemDirectoryHandle>}
  */
-export async function chooseFolder() {
+export async function chooseFolder(): Promise<FileSystemDirectoryHandle> {
   const folderHandle = await window.showDirectoryPicker({ id: 'playbook-editor-save', mode: 'readwrite' })
   rememberedFolderHandle = folderHandle
   try {
@@ -76,8 +77,8 @@ export async function chooseFolder() {
 }
 
 // Asks the browser for write permission on the folder, if not already granted.
-async function ensureWritable(folderHandle) {
-  const permissionOptions = { mode: 'readwrite' }
+async function ensureWritable(folderHandle: FileSystemDirectoryHandle): Promise<boolean> {
+  const permissionOptions = { mode: 'readwrite' as const }
   if ((await folderHandle.queryPermission(permissionOptions)) === 'granted') return true
   return (await folderHandle.requestPermission(permissionOptions)) === 'granted'
 }
@@ -86,11 +87,9 @@ async function ensureWritable(folderHandle) {
  * Writes (creating or overwriting) `fileName` in the remembered folder,
  * prompting for a folder first if none is remembered or its permission
  * was refused. Must be called from a user gesture (e.g. a click).
- * @param {string} fileName
- * @param {string} content
- * @returns {Promise<string>} the folder's name, for status messages
+ * @returns the folder's name, for status messages
  */
-export async function writeTextFile(fileName, content) {
+export async function writeTextFile(fileName: string, content: string): Promise<string> {
   let folderHandle = await getRememberedFolder()
   if (!folderHandle || !(await ensureWritable(folderHandle))) folderHandle = await chooseFolder()
   const fileHandle = await folderHandle.getFileHandle(fileName, { create: true })

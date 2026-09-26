@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // PlaybooksView — the "Playbook List" page (/playbooks): open .xml files,
 // create, rename, duplicate, delete and switch playbooks.
 //
@@ -9,7 +9,8 @@
 //    makes the ref of the same name below hold that actual DOM element.
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { usePlaybooksStore } from '../store/playbooks.js'
+import { usePlaybooksStore, type OpenFilesResult } from '../store/playbooks'
+import type { PlaybookRecord } from '../types'
 
 const router = useRouter()
 const playbooksStore = usePlaybooksStore()
@@ -20,28 +21,29 @@ const newPlaybookName = ref('')
 const createError = ref('')
 
 // Inline rename: which card is being renamed, and the text typed so far.
-const renamingPlaybookId = ref(null)
+const renamingPlaybookId = ref<string | null>(null)
 const renameInputText = ref('')
 
 // Delete is two clicks: "Delete" asks, "Confirm delete" does it.
-const playbookIdAwaitingDeleteConfirm = ref(null)
+const playbookIdAwaitingDeleteConfirm = ref<string | null>(null)
 
 // "Open files…"
-const fileInputElement = ref(null) // the hidden <input type="file"> (template ref)
+const fileInputElement = ref<HTMLInputElement | null>(null) // the hidden <input type="file"> (template ref)
 const isLoadingFiles = ref(false)
-const openFilesResult = ref(null) // { added, updated, errors } | null
+const openFilesResult = ref<OpenFilesResult | null>(null)
 const openFilesError = ref('')
 
 // The visible button just clicks the hidden file input, which opens the
 // browser's file picker.
-function pickLocalFiles() {
+function pickLocalFiles(): void {
   fileInputElement.value.click()
 }
 
 // Runs when the person has chosen files in the picker.
-async function onFilesPicked(event) {
-  const pickedFiles = Array.from(event.target.files || [])
-  event.target.value = '' // so picking the same files again still fires change
+async function onFilesPicked(event: Event): Promise<void> {
+  const fileInput = event.target as HTMLInputElement // the event came from the <input>
+  const pickedFiles = Array.from(fileInput.files || [])
+  fileInput.value = '' // so picking the same files again still fires change
   if (!pickedFiles.length) return
   isLoadingFiles.value = true
   openFilesError.value = ''
@@ -69,13 +71,13 @@ const sortedPlaybooks = computed(() =>
   [...playbooksStore.playbooks.value].sort((first, second) => first.playbookName.localeCompare(second.playbookName))
 )
 
-function openCreateDialog() {
+function openCreateDialog(): void {
   isCreateDialogOpen.value = true
   newPlaybookName.value = ''
   createError.value = ''
 }
 
-function submitCreate() {
+function submitCreate(): PlaybookRecord | undefined {
   try {
     const createdPlaybook = playbooksStore.createPlaybook(newPlaybookName.value)
     isCreateDialogOpen.value = false
@@ -86,19 +88,19 @@ function submitCreate() {
   }
 }
 
-function switchToPlaybook(playbookId) {
+function switchToPlaybook(playbookId: string): void {
   playbooksStore.setActivePlaybookId(playbookId)
   router.push('/steps')
 }
 
-function startRename(playbook) {
+function startRename(playbook: PlaybookRecord): void {
   renamingPlaybookId.value = playbook.id
   renameInputText.value = playbook.playbookName
 }
-function cancelRename() {
+function cancelRename(): void {
   renamingPlaybookId.value = null
 }
-function submitRename(playbookId) {
+function submitRename(playbookId: string): void {
   try {
     playbooksStore.renamePlaybook(playbookId, renameInputText.value)
     renamingPlaybookId.value = null
@@ -107,17 +109,17 @@ function submitRename(playbookId) {
   }
 }
 
-function duplicatePlaybook(playbookId) {
+function duplicatePlaybook(playbookId: string): void {
   playbooksStore.duplicatePlaybook(playbookId)
 }
 
-function askDelete(playbookId) {
+function askDelete(playbookId: string): void {
   playbookIdAwaitingDeleteConfirm.value = playbookId
 }
-function cancelDelete() {
+function cancelDelete(): void {
   playbookIdAwaitingDeleteConfirm.value = null
 }
-function confirmDelete(playbookId) {
+function confirmDelete(playbookId: string): void {
   try {
     playbooksStore.deletePlaybook(playbookId)
   } finally {

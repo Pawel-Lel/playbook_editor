@@ -5,18 +5,38 @@
 //
 // Uses the browser's native DOMParser — this module only works client-side.
 
-let generatedIdCounter = 0
-const generateId = (prefix) => `${prefix}${Date.now()}_${++generatedIdCounter}`
+import type {
+  Action,
+  ActionStep,
+  ClarificationRule,
+  Classification,
+  DialogConstraint,
+  Escalation,
+  GlobalReprompt,
+  Guideline,
+  ParsedPlaybook,
+  RoutingCategory,
+  SectionKey,
+  Setup,
+  Step
+} from '../types'
 
-function textOf(element) {
+// Plain TypeScript — no Vue in this file. Types (Element, Step, ...) after a
+// colon describe what a parameter or return value holds; `Element` is the
+// browser's type for one XML/HTML element.
+
+let generatedIdCounter = 0
+const generateId = (prefix: string): string => `${prefix}${Date.now()}_${++generatedIdCounter}`
+
+function textOf(element: Element | null): string {
   return element ? (element.textContent || '').trim() : ''
 }
 
-function attributeValue(element, name) {
+function attributeValue(element: Element | null, name: string): string {
   return element ? element.getAttribute(name) || '' : ''
 }
 
-function firstChildByTag(parent, tagName) {
+function firstChildByTag(parent: Element | null, tagName: string): Element | null {
   if (!parent) return null
   for (const child of parent.children) {
     if (child.tagName === tagName) return child
@@ -24,7 +44,7 @@ function firstChildByTag(parent, tagName) {
   return null
 }
 
-function childElementsByTag(parent, tagName) {
+function childElementsByTag(parent: Element | null, tagName: string): Element[] {
   if (!parent) return []
   return Array.from(parent.children).filter((childElement) => childElement.tagName === tagName)
 }
@@ -34,7 +54,7 @@ function childElementsByTag(parent, tagName) {
 // line — the reverse of xmlExport.js's buildCommentBlock, which splits a
 // `comment` field on blank lines into separate stacked <!-- --> blocks.
 // Each comment's own internal line breaks are preserved as written.
-function collectPrecedingComments(element) {
+function collectPrecedingComments(element: Element | null): string {
   if (!element) return ''
   const comments = []
   let node = element.previousSibling
@@ -61,7 +81,7 @@ function collectPrecedingComments(element) {
 // then strips the source document's indentation so the result is the same
 // left-aligned text the exporter re-indents. Without the dedent, every
 // import → export cycle would push raw policy bodies further right.
-function serializeChildrenXml(element) {
+function serializeChildrenXml(element: Element): string {
   const serializer = new XMLSerializer()
   const serializedXml = Array.from(element.childNodes)
     .map((childNode) => serializer.serializeToString(childNode))
@@ -97,7 +117,7 @@ function serializeChildrenXml(element) {
 // (paragraph breaks) and lines that start a bullet / numbered item keep
 // their line break, so structured text still round-trips.
 const BULLET_RE = /^([-*\u2022]|\d+[.)])\s/
-export function prose(text) {
+export function prose(text: string | null | undefined): string {
   const lines = String(text ?? '').split(/\r?\n/).map((line) => line.trim())
   const joinedLines = []
   let hadBlankLine = false
@@ -120,13 +140,13 @@ export function prose(text) {
   return joinedLines.join('\n').trim()
 }
 
-function proseOf(element) {
+function proseOf(element: Element | null): string {
   return element ? prose(element.textContent || '') : ''
 }
 
 // Top-level section tag → the key used by sectionOrder / sectionComments.
 // Both clarification wrapper styles map to the same logical section.
-const SECTION_KEY_BY_TAG = {
+const SECTION_KEY_BY_TAG: Record<string, SectionKey> = {
   SETUP: 'SETUP',
   GUIDELINES: 'GUIDELINES',
   DIALOG_CONSTRAINTS: 'DIALOG_CONSTRAINTS',
@@ -140,9 +160,9 @@ const SECTION_KEY_BY_TAG = {
 // Records which top-level sections the document contains (in document
 // order) and the XML comment sitting directly above each one, e.g.
 // "<!-- STEP 1: CLARIFY AMBIGUOUS INPUTS -->", so export reproduces both.
-function parseDocumentLayout(rootElement) {
-  const sectionOrder = []
-  const sectionComments = {}
+function parseDocumentLayout(rootElement: Element): Pick<ParsedPlaybook, 'sectionOrder' | 'sectionComments'> {
+  const sectionOrder: SectionKey[] = []
+  const sectionComments: ParsedPlaybook['sectionComments'] = {}
   Array.from(rootElement.children).forEach((sectionElement) => {
     const sectionKey = SECTION_KEY_BY_TAG[sectionElement.tagName]
     if (!sectionKey || sectionOrder.includes(sectionKey)) return
@@ -157,7 +177,7 @@ function parseDocumentLayout(rootElement) {
 // two different styles seen in the wild; a playbook may use either (or, in
 // principle, both) so both are always parsed.
 // ---------------------------------------------------------------------
-function parseSetup(rootElement) {
+function parseSetup(rootElement: Element): { playbookName: string; setup: Setup } {
   const setupElement = firstChildByTag(rootElement, 'SETUP')
   let playbookName = ''
   if (setupElement) {
@@ -190,7 +210,7 @@ function parseSetup(rootElement) {
 const STRUCTURED_POLICY_TAGS = new Set(['TRIGGER', 'TRIGGER_KEYWORDS', 'ACTION', 'REQUIREMENT', 'FORMAT'])
 const ACTION_STEP_TAGS = new Set(['SET_PARAMETER', 'INVOKE_FLOW'])
 
-export function blankGuideline() {
+export function blankGuideline(): Guideline {
   return {
     id: '',
     policyId: '',
@@ -207,12 +227,12 @@ export function blankGuideline() {
   }
 }
 
-function stripFlowRef(value) {
+function stripFlowRef(value: string): string {
   const match = String(value || '').match(/^\$\{FLOW:([^}]+)\}$/)
   return match ? match[1] : String(value || '')
 }
 
-function parseActionSteps(actionElement) {
+function parseActionSteps(actionElement: Element): ActionStep[] {
   return Array.from(actionElement.children).map((stepElement) => ({
     id: generateId('as'),
     kind: stepElement.tagName,
@@ -221,8 +241,8 @@ function parseActionSteps(actionElement) {
   }))
 }
 
-function parseGuideline(policyElement) {
-  const baseGuideline = { ...blankGuideline(), id: generateId('g'), policyId: attributeValue(policyElement, 'id'), comment: prose(collectPrecedingComments(policyElement)) }
+function parseGuideline(policyElement: Element): Guideline {
+  const baseGuideline: Guideline = { ...blankGuideline(), id: generateId('g'), policyId: attributeValue(policyElement, 'id'), comment: prose(collectPrecedingComments(policyElement)) }
   const policyChildren = Array.from(policyElement.children)
   if (policyChildren.length === 0) {
     return { ...baseGuideline, shape: 'text', text: proseOf(policyElement) }
@@ -248,14 +268,14 @@ function parseGuideline(policyElement) {
   return { ...baseGuideline, shape: 'raw', rawXml: serializeChildrenXml(policyElement) }
 }
 
-function parseGuidelines(rootElement) {
+function parseGuidelines(rootElement: Element): Guideline[] {
   return childElementsByTag(firstChildByTag(rootElement, 'GUIDELINES'), 'POLICY').map(parseGuideline)
 }
 
 // ---------------------------------------------------------------------
 // DIALOG_CONSTRAINTS
 // ---------------------------------------------------------------------
-function parseDialogConstraint(constraintElement) {
+function parseDialogConstraint(constraintElement: Element): DialogConstraint {
   const type = attributeValue(constraintElement, 'type')
   const criticalElement = firstChildByTag(constraintElement, 'CRITICAL')
   if (criticalElement) {
@@ -270,7 +290,7 @@ function parseDialogConstraint(constraintElement) {
   return { id: generateId('dc'), type, text: textOf(constraintElement), critical: '', action: '' }
 }
 
-function parseDialogConstraints(rootElement) {
+function parseDialogConstraints(rootElement: Element): DialogConstraint[] {
   return childElementsByTag(firstChildByTag(rootElement, 'DIALOG_CONSTRAINTS'), 'CONSTRAINT').map(parseDialogConstraint)
 }
 
@@ -279,7 +299,7 @@ function parseDialogConstraints(rootElement) {
 //  - <CLARIFICATION_RULES_POLICY><RULE condition="...">...</RULE>...</CLARIFICATION_RULES_POLICY>
 //  - <CLARIFICATION_RULES condition="..."><RULE keyword="...">...</RULE>...</CLARIFICATION_RULES>
 // ---------------------------------------------------------------------
-function parseClarificationRule(ruleElement) {
+function parseClarificationRule(ruleElement: Element): ClarificationRule {
   const hasKeyword = ruleElement.getAttribute && ruleElement.getAttribute('keyword') !== null
   return {
     id: generateId('cr'),
@@ -293,7 +313,9 @@ function parseClarificationRule(ruleElement) {
   }
 }
 
-function parseClarificationRules(rootElement) {
+function parseClarificationRules(
+  rootElement: Element
+): Pick<ParsedPlaybook, 'clarificationRules' | 'clarificationRulesCondition'> {
   const rulesWrapperElement = firstChildByTag(rootElement, 'CLARIFICATION_RULES') // triage-style outer wrapper
   const policyWrapperElement = firstChildByTag(rootElement, 'CLARIFICATION_RULES_POLICY') // this app's own simple wrapper
   const wrapperElement = rulesWrapperElement || policyWrapperElement
@@ -309,7 +331,7 @@ function parseClarificationRules(rootElement) {
 // ---------------------------------------------------------------------
 // ESCALATION_HANDLING
 // ---------------------------------------------------------------------
-function parseEscalation(escalationElement, playbookName) {
+function parseEscalation(escalationElement: Element, playbookName: string): Escalation {
   const actionElement = firstChildByTag(escalationElement, 'ACTION')
   let escalationReason = ''
   let playbookNameParam = ''
@@ -353,7 +375,7 @@ function parseEscalation(escalationElement, playbookName) {
   }
 }
 
-function parseEscalations(rootElement, playbookName) {
+function parseEscalations(rootElement: Element, playbookName: string): Escalation[] {
   return childElementsByTag(firstChildByTag(rootElement, 'ESCALATION_HANDLING'), 'ESCALATION').map((escalationElement) => parseEscalation(escalationElement, playbookName))
 }
 
@@ -361,7 +383,7 @@ function parseEscalations(rootElement, playbookName) {
 // way as a classification's <Action> (see parseClassificationAction below,
 // reused directly here) so tool_type/tool_id/Parameter are genuine,
 // independently editable fields rather than hardcoded boilerplate.
-function parseGlobalReprompt(handlerElement) {
+function parseGlobalReprompt(handlerElement: Element): GlobalReprompt {
   const actionElement = firstChildByTag(handlerElement, 'Action')
   return {
     comment: prose(collectPrecedingComments(handlerElement)),
@@ -370,7 +392,7 @@ function parseGlobalReprompt(handlerElement) {
   }
 }
 
-function parseGlobalReprompts(rootElement) {
+function parseGlobalReprompts(rootElement: Element): Pick<ParsedPlaybook, 'globalNoMatch' | 'globalNoInput'> {
   const eventHandlersElement = firstChildByTag(firstChildByTag(rootElement, 'ESCALATION_HANDLING'), 'EVENT_HANDLERS')
   const noMatchElement = firstChildByTag(eventHandlersElement, 'NO_MATCH')
   const noInputElement = firstChildByTag(eventHandlersElement, 'NO_INPUT')
@@ -388,7 +410,7 @@ function parseGlobalReprompts(rootElement) {
 // ROUTING_LOGIC — a router/triage playbook's equivalent of DIAGNOSTIC_FLOWS:
 // routes to other playbooks by name rather than asking its own questions.
 // ---------------------------------------------------------------------
-function parseRoutingCategory(categoryElement) {
+function parseRoutingCategory(categoryElement: Element): RoutingCategory {
   return {
     id: generateId('rc'),
     name: attributeValue(categoryElement, 'name'),
@@ -398,14 +420,14 @@ function parseRoutingCategory(categoryElement) {
   }
 }
 
-function parseRoutingLogic(rootElement) {
+function parseRoutingLogic(rootElement: Element): RoutingCategory[] {
   return childElementsByTag(firstChildByTag(rootElement, 'ROUTING_LOGIC'), 'CATEGORY').map(parseRoutingCategory)
 }
 
 // ---------------------------------------------------------------------
 // DIAGNOSTIC_FLOWS
 // ---------------------------------------------------------------------
-function parseClassificationAction(actionElement) {
+function parseClassificationAction(actionElement: Element): Action {
   const toolType = attributeValue(actionElement, 'tool_type')
   const toolId = attributeValue(actionElement, 'tool_id')
   const flowId = attributeValue(actionElement, 'flow_id')
@@ -419,10 +441,10 @@ function parseClassificationAction(actionElement) {
   return { id: generateId('a'), toolType, toolId, flowId, parameterName, parameterValue }
 }
 
-function parseClassification(classificationElement) {
+function parseClassification(classificationElement: Element): Classification {
   const comment = collectPrecedingComments(classificationElement)
   let query = ''
-  const actions = []
+  const actions: Action[] = []
   Array.from(classificationElement.children).forEach((childElement) => {
     if (childElement.tagName === 'Parameter' && attributeValue(childElement, 'name') === 'query') {
       query = textOf(childElement)
@@ -442,7 +464,7 @@ function parseClassification(classificationElement) {
   }
 }
 
-function parseEventHandlers(agentInteractionElement) {
+function parseEventHandlers(agentInteractionElement: Element | null): Pick<Step, 'noMatchResponse' | 'noInputResponse'> {
   const eventHandlersElement = firstChildByTag(agentInteractionElement, 'EventHandlers')
   return {
     noMatchResponse: textOf(firstChildByTag(firstChildByTag(eventHandlersElement, 'NoMatch'), 'DialogResponse')),
@@ -450,7 +472,7 @@ function parseEventHandlers(agentInteractionElement) {
   }
 }
 
-function parseDialogStep(stepElement) {
+function parseDialogStep(stepElement: Element): Step {
   const comment = collectPrecedingComments(stepElement)
   const agentInteractionElement = firstChildByTag(stepElement, 'AgentInteraction')
   const promptElement = firstChildByTag(agentInteractionElement, 'Prompt')
@@ -474,7 +496,7 @@ function parseDialogStep(stepElement) {
   }
 }
 
-function parseSteps(flowsRoot) {
+function parseSteps(flowsRoot: Element | null): Step[] {
   return childElementsByTag(flowsRoot, 'DIALOG_STEP').map(parseDialogStep)
 }
 
@@ -484,10 +506,8 @@ function parseSteps(flowsRoot) {
  * steps) or a bare <DIAGNOSTIC_FLOWS> document (steps only — the config
  * fields come back blank). Every nested record (steps, classifications,
  * actions, guidelines, ...) is already assigned a fresh unique `id`.
- * @param {string} xmlText
- * @returns {{playbookName: string, setup: object, guidelines: Array, dialogConstraints: Array, clarificationRules: Array, escalations: Array, steps: Array}}
  */
-export function parsePlaybookXml(xmlText) {
+export function parsePlaybookXml(xmlText: string): ParsedPlaybook {
   const xmlDocument = new DOMParser().parseFromString(xmlText, 'application/xml')
   const parserError = xmlDocument.querySelector('parsererror')
   if (parserError) {
@@ -549,10 +569,9 @@ export function parsePlaybookXml(xmlText) {
  * saved by an older version of the app. Returns null (and leaves the
  * caller's data alone) if the body doesn't fit the structured shape or
  * isn't well-formed.
- * @param {string} rawXml
- * @returns {object|null} guideline fields (no id / policyId)
+ * @returns guideline fields (no id / policyId)
  */
-export function structurePolicyBody(rawXml) {
+export function structurePolicyBody(rawXml: string): Partial<Guideline> | null {
   try {
     const xmlDocument = new DOMParser().parseFromString(`<POLICY>${rawXml || ''}</POLICY>`, 'application/xml')
     if (xmlDocument.querySelector('parsererror')) return null

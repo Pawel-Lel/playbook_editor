@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // CRUD for <GUIDELINES><POLICY> entries, shared by both Playbook Settings
 // layouts. Each policy has an explicit shape so only the fields that will
 // actually be exported are shown:
@@ -8,28 +8,27 @@
 //                <INVOKE_FLOW> steps (Triage's CANCELLATION_OVERRIDE and
 //                HANDOFF_SUMMARY)
 //  - raw:        verbatim XML body, for anything else
-import { usePlaybookStore } from '../store/playbook.js'
-import { structurePolicyBody } from '../utils/xmlImport.js'
-import { inferPolicyShape } from '../utils/xmlExport.js'
+import { usePlaybookStore } from '../store/playbook'
+import { structurePolicyBody } from '../utils/xmlImport'
+import { inferPolicyShape } from '../utils/xmlExport'
 import ItemToolbar from './ItemToolbar.vue'
+import type { Guideline, PolicyShape } from '../types'
 
 // Props: inputs from the parent, e.g. <GuidelinesEditor id-placeholder="e.g. TONE" />
 // (kebab-case in the template = camelCase here).
-defineProps({
-  idPlaceholder: { type: String, default: 'e.g. FOCUS' }
-})
+withDefaults(defineProps<{ idPlaceholder?: string }>(), { idPlaceholder: 'e.g. FOCUS' })
 
 const playbookStore = usePlaybookStore()
 
 // The guideline's shape ('text' | 'structured' | 'raw'), working it out
 // from its filled-in fields the first time if it was never set.
-function shapeOf(guideline) {
+function shapeOf(guideline: Guideline): PolicyShape {
   if (!guideline.shape) guideline.shape = inferPolicyShape(guideline)
   return guideline.shape
 }
 
 // "Convert to structured fields": parse the raw XML body into fields.
-function convertRawToStructured(guideline) {
+function convertRawToStructured(guideline: Guideline): void {
   const structuredFields = structurePolicyBody(guideline.rawXml)
   if (!structuredFields) {
     alert("This XML body doesn't fit the structured fields (TRIGGER, TRIGGER_KEYWORDS, ACTION, REQUIREMENT, FORMAT), so it stays as raw XML.")
@@ -62,7 +61,7 @@ function convertRawToStructured(guideline) {
         </div>
         <div class="field">
           <label>Shape</label>
-          <select :value="shapeOf(guideline)" @change="guideline.shape = $event.target.value">
+          <select :value="shapeOf(guideline)" @change="guideline.shape = ($event.target as HTMLSelectElement).value as PolicyShape">
             <option value="text">Plain text</option>
             <option value="structured">Structured (trigger / keywords / action / requirement / format)</option>
             <option value="raw">Raw XML</option>

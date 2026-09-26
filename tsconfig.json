@@ -1,0 +1,21 @@
+{
+  // TypeScript settings for the whole app. Type checking only — Vite does
+  // the actual compiling, so `noEmit` is on. Run it with `npm run typecheck`.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    // Relaxed mode (not "strict"): values may be null/undefined and
+    // parameters may go untyped without errors — easier to read and learn.
+    "strict": false,
+    "noEmit": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "useDefineForClassFields": true,
+    "jsx": "preserve"
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts"]
+}

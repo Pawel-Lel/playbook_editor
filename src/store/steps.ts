@@ -7,20 +7,21 @@
 // always points at the active playbook's step list, even after the person
 // switches to another playbook.
 import { computed } from 'vue'
-import { getActivePlaybookRecord } from './playbooks.js'
+import { getActivePlaybookRecord } from './playbooks'
+import type { Action, Classification, Step, Target } from '../types'
 
 // Unique ids for new classifications/actions: a prefix plus a number that
 // only goes up (starting from the current time, so ids stay unique across
 // page reloads too).
 let lastGeneratedNumber = Date.now()
-function generateId(prefix) {
+function generateId(prefix: string): string {
   lastGeneratedNumber += 1
   return `${prefix}${lastGeneratedNumber}`
 }
 
 // "Boiler not working?" → "Boiler_not_working" — step ids may only contain
 // letters, digits, underscores and square brackets.
-function toStepId(text) {
+function toStepId(text: string): string {
   return text
     .trim()
     .replace(/[^a-zA-Z0-9_[\]]+/g, '_')
@@ -31,7 +32,7 @@ function toStepId(text) {
 // say what such a target is, so infer it from naming conventions: a
 // "[BRACKETED]" id is a runtime placeholder, an "..._Escalation" id hands
 // off to an escalation flow; anything else is flagged as unresolved.
-function externalTarget(targetId) {
+function externalTarget(targetId: string): Target {
   if (/^\[.*\]$/.test(targetId)) return { id: targetId, kind: 'dynamic', label: `${targetId} (runtime placeholder)` }
   if (/escalation/i.test(targetId)) return { id: targetId, kind: 'flow', label: `${targetId} (flow)` }
   return { id: targetId, kind: 'unknown', label: targetId }
@@ -39,7 +40,7 @@ function externalTarget(targetId) {
 
 // The normalize... functions fill in every missing field with a default,
 // so the rest of the app can rely on each field existing.
-function normalizeAction(action) {
+function normalizeAction(action: Partial<Action>): Action {
   return {
     id: action.id || generateId('a'),
     toolType: action.toolType || '',
@@ -50,7 +51,7 @@ function normalizeAction(action) {
   }
 }
 
-function normalizeClassification(classification) {
+function normalizeClassification(classification: Partial<Classification>): Classification {
   return {
     id: classification.id || generateId('c'),
     classificationId: classification.classificationId || '',
@@ -63,7 +64,7 @@ function normalizeClassification(classification) {
   }
 }
 
-function normalizeStep(stepId, formData) {
+function normalizeStep(stepId: string, formData: Partial<Step>): Step {
   return {
     id: stepId,
     topic: formData.topic || '',
@@ -88,16 +89,16 @@ export function useStepsStore() {
 
   const stepIds = computed(() => steps.value.map((step) => step.id))
 
-  function getStep(stepId) {
+  function getStep(stepId: string): Step | null {
     return steps.value.find((step) => step.id === stepId) || null
   }
 
-  function idExists(stepId) {
+  function idExists(stepId: string): boolean {
     return steps.value.some((step) => step.id === stepId)
   }
 
   // formData is what StepForm.vue submits: every field of the step.
-  function createStep(formData) {
+  function createStep(formData: Partial<Step>): Step {
     const newStepId = toStepId(formData.id || formData.topic || 'New_Step')
     if (!newStepId) throw new Error('A step ID is required.')
     if (idExists(newStepId)) throw new Error(`A step with ID "${newStepId}" already exists.`)
@@ -106,7 +107,7 @@ export function useStepsStore() {
     return newStep
   }
 
-  function updateStep(originalStepId, formData) {
+  function updateStep(originalStepId: string, formData: Partial<Step>): Step {
     const stepIndex = steps.value.findIndex((step) => step.id === originalStepId)
     if (stepIndex === -1) throw new Error(`Step "${originalStepId}" not found.`)
     const newStepId = toStepId(formData.id || originalStepId)
@@ -131,13 +132,13 @@ export function useStepsStore() {
     return updatedStep
   }
 
-  function deleteStep(stepId) {
+  function deleteStep(stepId: string): void {
     const stepIndex = steps.value.findIndex((step) => step.id === stepId)
     if (stepIndex === -1) return
     steps.value.splice(stepIndex, 1)
   }
 
-  function clearSteps() {
+  function clearSteps(): void {
     steps.value.splice(0, steps.value.length)
   }
 
@@ -145,7 +146,7 @@ export function useStepsStore() {
   // has its own DIALOG_STEP record — used to render the relationship map and
   // to populate "next step" pickers with valid escalation/terminal targets.
   const allReferencedTargets = computed(() => {
-    const targetsById = new Map()
+    const targetsById = new Map<string, Target>()
     steps.value.forEach((step) => {
       targetsById.set(step.id, { id: step.id, kind: 'step', label: step.topic || step.id })
     })

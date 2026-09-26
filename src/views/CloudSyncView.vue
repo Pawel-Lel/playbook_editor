@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // CloudSyncView — the "Cloud sync" page (/cloud-sync): shows the configured
 // bucket, the sign-in status, and buttons to load/save every playbook
 // from/to Google Cloud Storage. The real work happens in store/cloudSync.js.
@@ -6,14 +6,14 @@
 // Vue concepts: ref() for this page's own state (busy flag, messages),
 // computed() for values derived from the cloudSync.
 import { ref, computed } from 'vue'
-import { useCloudSyncStore } from '../store/cloudSync.js'
-import { usePlaybooksStore } from '../store/playbooks.js'
+import { useCloudSyncStore } from '../store/cloudSync'
+import { usePlaybooksStore, type LoadSummary } from '../store/playbooks'
 
 const cloudSync = useCloudSyncStore()
 const playbooksStore = usePlaybooksStore()
 const isBusy = ref(false) // true while a load/save/sign-in runs (disables the buttons)
 const statusMessage = ref('')
-const statusMessageKind = ref('info') // 'info' | 'error'
+const statusMessageKind = ref<'info' | 'error'>('info')
 
 // Names of the required environment variables that aren't set.
 // (`!x && 'NAME'` gives 'NAME' when x is empty, else false; filter(Boolean)
@@ -32,7 +32,7 @@ const statusLabel = computed(() => {
 })
 
 // "2026-09-26T10:00:00Z" → the date/time in the person's local format.
-function formatTime(isoTimestamp) {
+function formatTime(isoTimestamp: string | null): string {
   if (!isoTimestamp) return 'never'
   try {
     return new Date(isoTimestamp).toLocaleString()
@@ -42,7 +42,7 @@ function formatTime(isoTimestamp) {
 }
 
 // A one-line summary of a bucket load, e.g. "Loaded 5 playbooks ...".
-function summarizeLoad(loadSummary) {
+function summarizeLoad(loadSummary: LoadSummary | null): string {
   if (!loadSummary) return ''
   const sentences = [`Loaded ${loadSummary.loadedCount} playbook${loadSummary.loadedCount === 1 ? '' : 's'} from the bucket.`]
   if (loadSummary.errors.length) {
@@ -52,7 +52,7 @@ function summarizeLoad(loadSummary) {
   return sentences.join(' ')
 }
 
-async function handleConnect() {
+async function handleConnect(): Promise<void> {
   isBusy.value = true
   statusMessage.value = ''
   try {
@@ -70,13 +70,13 @@ async function handleConnect() {
   }
 }
 
-function handleDisconnect() {
+function handleDisconnect(): void {
   cloudSync.disconnect()
   statusMessage.value = 'Signed out.'
   statusMessageKind.value = 'info'
 }
 
-async function handleLoad() {
+async function handleLoad(): Promise<void> {
   isBusy.value = true
   statusMessage.value = ''
   try {
@@ -93,7 +93,7 @@ async function handleLoad() {
   }
 }
 
-async function handleSave() {
+async function handleSave(): Promise<void> {
   // Ask first: saving overwrites each playbook's existing file in the bucket.
   const playbookNameLines = playbooksStore.playbooks.value.map(
     (playbook) => `• ${playbook.playbookName || '(untitled playbook)'}`

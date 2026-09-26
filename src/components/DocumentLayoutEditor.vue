@@ -1,13 +1,14 @@
-<script setup>
+<script setup lang="ts">
 // Edits how the playbook is laid out as an XML document: which top-level
 // sections are written and in what order, the <!-- ... --> comment above
 // each one, and whether the file starts with an <?xml ...?> declaration.
 // Imported files remember all three (Triage.xml: no declaration,
 // ESCALATION_HANDLING before CLARIFICATION_RULES, "STEP 1: ..." comments).
 import { computed } from 'vue'
-import { usePlaybookStore } from '../store/playbook.js'
-import { useStepsStore } from '../store/steps.js'
-import { SECTION_KEYS, SECTION_LABELS, DEFAULT_SECTION_COMMENTS, resolveSectionOrder } from '../utils/xmlExport.js'
+import { usePlaybookStore } from '../store/playbook'
+import { useStepsStore } from '../store/steps'
+import type { SectionKey } from '../types'
+import { SECTION_KEYS, SECTION_LABELS, DEFAULT_SECTION_COMMENTS, resolveSectionOrder } from '../utils/xmlExport'
 
 const playbookStore = usePlaybookStore()
 const stepsStore = useStepsStore()
@@ -17,11 +18,11 @@ const exportedSections = computed(() => resolveSectionOrder(playbookStore.toExpo
 const omittedSections = computed(() => SECTION_KEYS.filter((sectionKey) => !exportedSections.value.includes(sectionKey)))
 
 // Saves a new section order to the playbook.
-function saveSectionOrder(newOrder) {
+function saveSectionOrder(newOrder: SectionKey[]): void {
   playbookStore.sectionOrder.value = newOrder
 }
 // Swaps a section with its neighbour; direction is -1 (up) or +1 (down).
-function moveSection(sectionKey, direction) {
+function moveSection(sectionKey: SectionKey, direction: number): void {
   const newOrder = [...exportedSections.value]
   const currentIndex = newOrder.indexOf(sectionKey)
   const neighbourIndex = currentIndex + direction
@@ -30,18 +31,18 @@ function moveSection(sectionKey, direction) {
   ;[newOrder[currentIndex], newOrder[neighbourIndex]] = [newOrder[neighbourIndex], newOrder[currentIndex]]
   saveSectionOrder(newOrder)
 }
-function excludeSection(sectionKey) {
+function excludeSection(sectionKey: SectionKey): void {
   saveSectionOrder(exportedSections.value.filter((otherKey) => otherKey !== sectionKey))
 }
-function includeSection(sectionKey) {
+function includeSection(sectionKey: SectionKey): void {
   saveSectionOrder([...exportedSections.value, sectionKey])
 }
 // The comment written above a section: its own, or the default one.
-function sectionCommentText(sectionKey) {
+function sectionCommentText(sectionKey: SectionKey): string {
   const storedComment = playbookStore.sectionComments.value[sectionKey]
   return storedComment === undefined || storedComment === null ? DEFAULT_SECTION_COMMENTS[sectionKey] : storedComment
 }
-function setSectionComment(sectionKey, commentText) {
+function setSectionComment(sectionKey: SectionKey, commentText: string): void {
   playbookStore.sectionComments.value[sectionKey] = commentText
 }
 </script>
@@ -60,7 +61,7 @@ function setSectionComment(sectionKey, commentText) {
         type="text"
         :value="sectionCommentText(sectionKey)"
         :placeholder="`Comment above <${sectionKey}> (blank = none)`"
-        @input="setSectionComment(sectionKey, $event.target.value)"
+        @input="setSectionComment(sectionKey, ($event.target as HTMLInputElement).value)"
       />
       <span class="layout-actions">
         <button type="button" class="btn btn-ghost" :disabled="sectionIndex === 0" title="Move up" @click="moveSection(sectionKey, -1)">↑</button>

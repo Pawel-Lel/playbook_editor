@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // ImportXmlModal — pop-up for pasting or uploading XML that replaces the
 // active playbook's content in place (new playbooks come from the
 // Playbooks page's "Open files…" instead). It doesn't import anything
@@ -10,13 +10,19 @@ import { ref } from 'vue'
 
 // Props are used directly in the template (activePlaybookName, errorMessage),
 // so the return value of defineProps isn't needed here.
-defineProps({
-  activePlaybookName: { type: String, default: '' },
-  // Set by the parent after a failed import attempt (e.g. invalid XML) —
-  // shown alongside this modal's own "paste something first" validation.
-  errorMessage: { type: String, default: '' }
-})
-const emit = defineEmits(['close', 'imported'])
+withDefaults(
+  defineProps<{
+    activePlaybookName?: string
+    // Set by the parent after a failed import attempt (e.g. invalid XML) —
+    // shown alongside this modal's own "paste something first" validation.
+    errorMessage?: string
+  }>(),
+  { activePlaybookName: '', errorMessage: '' }
+)
+const emit = defineEmits<{
+  close: []
+  imported: [xmlText: string]
+}>()
 
 const xmlText = ref('') // bound to the textarea with v-model
 const chosenFileName = ref('')
@@ -24,8 +30,9 @@ const localError = ref('')
 
 // Reads the chosen file into the textarea. FileReader works with
 // callbacks: onload runs once the file has been read.
-function onFileChange(event) {
-  const chosenFile = event.target.files?.[0]
+function onFileChange(event: Event): void {
+  // `as HTMLInputElement`: tells TypeScript the event came from an <input>.
+  const chosenFile = (event.target as HTMLInputElement).files?.[0]
   if (!chosenFile) return
   chosenFileName.value = chosenFile.name
   localError.value = ''
@@ -50,7 +57,7 @@ function handleImport() {
 
 // Close when the dark backdrop itself is clicked (event.target), but not
 // when the click lands inside the dialog box.
-function onOverlayClick(event) {
+function onOverlayClick(event: MouseEvent): void {
   if (event.target === event.currentTarget) emit('close')
 }
 </script>

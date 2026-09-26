@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // StepsListView — the "Diagnostic steps" page (/steps): lists the active
 // playbook's steps with search, edit/delete, and XML export.
 //
@@ -7,15 +7,15 @@
 // updates automatically when what it reads changes.
 import { ref, computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import { useStepsStore } from '../store/steps.js'
-import { usePlaybookStore } from '../store/playbook.js'
-import { buildLlmInstructionsXml, exportFileName } from '../utils/xmlExport.js'
+import { useStepsStore } from '../store/steps'
+import { usePlaybookStore } from '../store/playbook'
+import { buildLlmInstructionsXml, exportFileName } from '../utils/xmlExport'
 import ExportXmlModal from '../components/ExportXmlModal.vue'
 
 const stepsStore = useStepsStore()
 const playbookStore = usePlaybookStore()
 const searchText = ref('') // bound to the search box with v-model
-const stepIdAwaitingDeleteConfirm = ref(null) // shows "Confirm delete" on that card
+const stepIdAwaitingDeleteConfirm = ref<string | null>(null) // shows "Confirm delete" on that card
 const isExportModalOpen = ref(false)
 
 const exportedXml = computed(() =>
@@ -37,18 +37,18 @@ const visibleSteps = computed(() => {
 })
 
 // Deleting is two clicks: "Delete" asks, "Confirm delete" does it.
-function askDelete(stepId) {
+function askDelete(stepId: string): void {
   stepIdAwaitingDeleteConfirm.value = stepId
 }
-function cancelDelete() {
+function cancelDelete(): void {
   stepIdAwaitingDeleteConfirm.value = null
 }
-function confirmDelete(stepId) {
+function confirmDelete(stepId: string): void {
   stepsStore.deleteStep(stepId)
   stepIdAwaitingDeleteConfirm.value = null
 }
 
-function clearAllSteps() {
+function clearAllSteps(): void {
   if (confirm('Remove every step from this playbook? This cannot be undone.')) {
     stepsStore.clearSteps()
   }
