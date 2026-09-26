@@ -6,9 +6,12 @@ import FlowMapView from '../views/FlowMapView.vue'
 import PlaybookSettingsView from '../views/PlaybookSettingsView.vue'
 import CloudSyncView from '../views/CloudSyncView.vue'
 import PlaybooksView from '../views/PlaybooksView.vue'
+import LoginView from '../views/LoginView.vue'
+import { useCloudSyncStore } from '../store/cloudSync.js'
 
 const routes = [
   { path: '/', redirect: '/steps' },
+  { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
   { path: '/playbooks', name: 'playbooks', component: PlaybooksView },
   { path: '/steps', name: 'steps-list', component: StepsListView },
   { path: '/steps/new', name: 'steps-create', component: StepCreateView },
@@ -26,6 +29,17 @@ const router = createRouter({
   scrollBehavior() {
     return { top: 0 }
   }
+})
+
+// Every page but the login page needs a signed-in Google account; anyone
+// else is sent to /login and brought back to where they were headed after.
+router.beforeEach((to) => {
+  const { signedIn } = useCloudSyncStore()
+  if (to.meta.public) {
+    return signedIn.value && to.name === 'login' ? (to.query.redirect || '/') : true
+  }
+  if (!signedIn.value) return { name: 'login', query: to.fullPath === '/' ? {} : { redirect: to.fullPath } }
+  return true
 })
 
 export default router

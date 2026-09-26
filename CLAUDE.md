@@ -44,6 +44,11 @@ There is no test runner, linter, or formatter configured. `dom-stub.mjs` is a sm
 - The header's **Save** button calls `saveActiveToLocalFolder()` in `playbooks.js`, which writes the active playbook's `.xml`. Browsers without the API (Firefox, Safari) get a plain download instead.
 - The Playbooks page's **Open files…** uses a plain `<input type="file" multiple>`, so it works in every browser, and passes the files to `openLocalFiles()`. A file whose name matches a loaded playbook's file (`localFileNameFor`) updates that playbook in place, after a confirmation. Other files are added as new playbooks.
 
+### Login gate
+Every route except `/login` (`meta.public`) requires a signed-in Google account. The guard is `router.beforeEach` in `src/router/index.js`, and `App.vue` watches `signedIn` so it can send the user back to login when they sign out or the token expires. Sign-in is `cloudSync.connect()`, which gets a GIS token (storage + `openid email` scopes) and then calls `gcsClient.checkBucketAccess()`. An account that can't list the bucket is signed straight back out, so the bucket's IAM decides who is authorised.
+- The token is kept in `sessionStorage`, so it survives a reload but not closing the tab. When it expires, `sessionExpired` is set. Signing in again after that skips the automatic bucket load, so local edits aren't overwritten.
+- This is a client-side gate only. The static bundle and `localStorage` aren't protected; the bucket's IAM is what protects the data.
+
 ### Runtime config
 `src/config/runtimeConfig.js` resolves `GOOGLE_OAUTH_CLIENT_ID`, `GCS_BUCKET`, and `GCS_OBJECT_PREFIX` in this order:
 1. `window.__APP_CONFIG__`, from `/config.js`. In the Docker/Cloud Run image, `deploy/docker-entrypoint.sh` writes that file from env vars at container start. `public/config.js` is an empty placeholder for dev and static hosts.

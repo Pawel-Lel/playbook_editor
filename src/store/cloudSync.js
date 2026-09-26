@@ -32,7 +32,13 @@ function loadConfig() {
 
 const state = reactive({
   config: loadConfig(),
-  signedIn: false,
+  // Signing in is required to use the app at all (see the router guard);
+  // a token restored from this tab's session counts.
+  signedIn: gcs.isSignedIn(),
+  // True once this tab's token has run out: the next sign-in only
+  // re-authenticates, it doesn't reload (and overwrite) the playbooks.
+  sessionExpired: gcs.hadSession() && !gcs.isSignedIn(),
+  userEmail: gcs.getUserEmail(),
   syncing: false,
   lastSyncedAt: null,
   lastError: '',
@@ -57,6 +63,23 @@ watch(
 // module never has to import it directly — avoids a circular import while
 // still letting playbooks.js trigger an auto-save on every local change.
 const registry = new Map() // key -> { loadAll(bucket, prefix), saveAll(bucket, prefix), saveOne(bucket, prefix) }
+
+let expiryTimer = null
+
+// Signs the person out of the app (back to the login page) when their
+// short-lived Google token runs out.
+function scheduleExpiry() {
+  clearTimeout(expiryTimer)
+  if (!state.signedIn) return
+  const ms = gcs.getTokenExpiresAt() - Date.now() - 5000
+  if (ms <= 0) {
+    state.signedIn = false
+    state.sessionExpired = true
+    return
+  }
+  expiryTimer = setTimeout(scheduleExpiry, ms)
+}
+scheduleExpiry()
 
 export function registerSyncTarget(key, { loadAll, saveAll, saveOne }) {
   registry.set(key, { loadAll, saveAll, saveOne })
@@ -133,19 +156,47 @@ export function useCloudSyncStore() {
     Object.assign(state.config, patch)
   }
 
+  /**
+   * Signs in with Google and checks the account can access the bucket —
+   * an account that can't is signed straight back out, with the reason
+   * thrown. A fresh sign-in then loads every playbook in the bucket; a
+   * re-sign-in after the token expired keeps the local playbooks as they
+   * are, so edits made before the expiry aren't overwritten.
+   */
   async function connect() {
+    if (!CLIENT_ID) throw new Error('Sign-in is not configured — set the GOOGLE_OAUTH_CLIENT_ID environment variable.')
     state.lastError = ''
-    await gcs.requestAccessToken(CLIENT_ID, { prompt: 'consent' })
-    state.signedIn = true
-    // "Load all playbooks available in the bucket once the person logs in."
+    const reauthenticating = state.sessionExpired
+    await gcs.requestAccessToken(CLIENT_ID)
     if (isConfigured.value) {
-      await loadFromBucketInternal()
+      try {
+        await gcs.checkBucketAccess(BUCKET, OBJECT_PREFIX)
+      } catch (e) {
+        gcs.clearAccessToken()
+        throw e
+      }
+    }
+    state.userEmail = await gcs.fetchUserEmail()
+    state.signedIn = true
+    state.sessionExpired = false
+    scheduleExpiry()
+    // "Load all playbooks available in the bucket once the person logs in."
+    if (isConfigured.value && !reauthenticating) {
+      try {
+        await loadFromBucketInternal()
+      } catch (e) {
+        // Signed in regardless; the Cloud sync page shows what went wrong.
+        state.lastError = e.message
+      }
     }
   }
 
   function disconnect() {
     gcs.clearAccessToken()
+    clearTimeout(expiryTimer)
     state.signedIn = false
+    state.sessionExpired = false
+    state.userEmail = ''
   }
 
   async function loadFromBucket() {
@@ -167,6 +218,8 @@ export function useCloudSyncStore() {
     isConfigured,
     canWrite,
     signedIn: computed(() => state.signedIn),
+    sessionExpired: computed(() => state.sessionExpired),
+    userEmail: computed(() => state.userEmail),
     syncing: computed(() => state.syncing),
     lastSyncedAt: computed(() => state.lastSyncedAt),
     lastError: computed(() => state.lastError),

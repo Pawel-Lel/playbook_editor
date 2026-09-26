@@ -28,6 +28,14 @@ a single blank "Untitled playbook".
   destructive actions (`--danger`). Every component sources its colors
   from these variables, so the whole app's look flows from this one place.
 
+- **Google sign-in required** — anyone not signed in only sees a login
+  page. Signing in checks that the Google account can access the
+  configured bucket; an account that can't is refused. The session lasts
+  as long as the Google token (about an hour) and survives page reloads in
+  the same tab; the header shows who is signed in, with a **Sign out**
+  button. This is a client-side gate — the data itself is protected by
+  the bucket's IAM permissions.
+
 - **Save to a local folder** — the **Save** button in the header writes the
   active playbook's `.xml` into a folder you choose (creating or
   overwriting the file), using the same filename it has in the bucket, so

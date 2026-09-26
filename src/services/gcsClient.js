@@ -17,7 +17,14 @@
 //    origins".
 
 const GIS_SRC = 'https://accounts.google.com/gsi/client'
-const SCOPE = 'https://www.googleapis.com/auth/devstorage.read_write'
+// openid + email let the app show who is signed in (via the userinfo
+// endpoint) alongside the storage scope the bucket calls need.
+const SCOPE = 'https://www.googleapis.com/auth/devstorage.read_write openid email'
+const USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
+// The token is kept in sessionStorage so a page reload in the same tab
+// doesn't force a new sign-in; it still expires with the token (~1 hour)
+// and is gone when the tab closes.
+const SESSION_KEY = 'playbook-editor:google-session:v1'
 const GCS_API = 'https://storage.googleapis.com/storage/v1'
 const GCS_UPLOAD = 'https://storage.googleapis.com/upload/storage/v1'
 
@@ -41,6 +48,42 @@ let tokenClient = null
 let tokenClientId = null
 let accessToken = null
 let tokenExpiresAt = 0
+let userEmail = ''
+
+function persistSession() {
+  try {
+    if (tokenExpiresAt) {
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ accessToken, tokenExpiresAt, userEmail }))
+    } else {
+      sessionStorage.removeItem(SESSION_KEY)
+    }
+  } catch (e) {
+    console.warn('Could not persist the Google session.', e)
+  }
+}
+
+;(function restoreSession() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null')
+    if (saved?.accessToken) {
+      accessToken = saved.accessToken
+      tokenExpiresAt = saved.tokenExpiresAt || 0
+      userEmail = saved.userEmail || ''
+    }
+  } catch (e) {
+    console.warn('Could not restore the Google session.', e)
+  }
+})()
+
+/**
+ * Loads Google Identity Services and prepares the token client ahead of
+ * time, so the sign-in popup opens straight from the click that asks for
+ * it — a slow script load in between could get the popup blocked.
+ * @param {string} clientId
+ */
+export async function prepareSignIn(clientId) {
+  if (clientId?.trim()) await ensureTokenClient(clientId.trim())
+}
 
 async function ensureTokenClient(clientId) {
   await loadGis()
@@ -70,6 +113,7 @@ export async function requestAccessToken(clientId, { prompt = '' } = {}) {
       }
       accessToken = resp.access_token
       tokenExpiresAt = Date.now() + (resp.expires_in || 3600) * 1000
+      persistSession()
       resolve(accessToken)
     }
     try {
@@ -89,12 +133,49 @@ export function isSignedIn() {
   return !!getAccessToken()
 }
 
+/** When the current token expires (ms since epoch), or 0 if none. */
+export function getTokenExpiresAt() {
+  return tokenExpiresAt
+}
+
+/**
+ * True if this tab signed in earlier, even if that token has since expired
+ * — i.e. signing in again is a re-authentication, not a fresh session.
+ */
+export function hadSession() {
+  return tokenExpiresAt > 0
+}
+
+export function getUserEmail() {
+  return userEmail
+}
+
+/**
+ * Looks up the signed-in account's email address (needs the openid/email
+ * scopes). Resolves to '' rather than failing if it can't be read.
+ * @returns {Promise<string>}
+ */
+export async function fetchUserEmail() {
+  const token = getAccessToken()
+  if (!token) return ''
+  try {
+    const res = await fetch(USERINFO_URL, { headers: { Authorization: `Bearer ${token}` } })
+    if (res.ok) userEmail = (await res.json()).email || ''
+  } catch (e) {
+    console.warn('Could not read the signed-in account.', e)
+  }
+  persistSession()
+  return userEmail
+}
+
 export function clearAccessToken() {
   if (accessToken && window.google?.accounts?.oauth2?.revoke) {
     window.google.accounts.oauth2.revoke(accessToken, () => {})
   }
   accessToken = null
   tokenExpiresAt = 0
+  userEmail = ''
+  persistSession()
 }
 
 function authHeaders() {
@@ -133,6 +214,26 @@ export async function listObjects(bucket, prefix = '', { delimiter = '' } = {}) 
     pageToken = data.nextPageToken || ''
   } while (pageToken)
   return results
+}
+
+/**
+ * Confirms the signed-in account can list objects in the bucket (under
+ * `prefix`) — the app's test for "authorized to use this app". Throws a
+ * readable error if not.
+ * @param {string} bucket
+ * @param {string} [prefix]
+ */
+export async function checkBucketAccess(bucket, prefix = '') {
+  if (!bucket?.trim()) throw new Error('Missing bucket name.')
+  const params = new URLSearchParams({ maxResults: '1' })
+  if (prefix) params.set('prefix', prefix)
+  const res = await fetch(`${GCS_API}/b/${encodeURIComponent(bucket)}/o?${params}`, { headers: authHeaders() })
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(`This Google account doesn't have access to gs://${bucket}. Ask an administrator to grant it a Storage role on the bucket.`)
+  }
+  if (!res.ok) {
+    throw new Error(`Could not check access to gs://${bucket} (${res.status} ${res.statusText}).`)
+  }
 }
 
 /**

@@ -1,11 +1,26 @@
 <script setup>
-import { ref } from 'vue'
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { ref, watch } from 'vue'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { usePlaybooksStore } from './store/playbooks.js'
+import { useCloudSyncStore } from './store/cloudSync.js'
 import { isSupported as canPickFolder } from './services/localFolder.js'
 
 const route = useRoute()
+const router = useRouter()
 const playbooksStore = usePlaybooksStore()
+const sync = useCloudSyncStore()
+
+// Signing out, or the Google token expiring mid-session, sends the person
+// back to the login page; the router guard covers every later navigation.
+watch(sync.signedIn, (signedIn) => {
+  if (!signedIn && !route.meta.public) {
+    router.replace({ name: 'login', query: { redirect: route.fullPath } })
+  }
+})
+
+function signOut() {
+  sync.disconnect()
+}
 
 const saving = ref(false)
 const saveStatus = ref({ kind: '', text: '' }) // kind: '' | 'ok' | 'error'
@@ -31,6 +46,8 @@ async function saveLocally(pickFolder = false) {
 </script>
 
 <template>
+  <RouterView v-if="route.meta.public" />
+  <template v-else>
   <header class="app-header">
     <div class="app-header__inner">
       <RouterLink to="/steps" class="brand">
@@ -99,6 +116,13 @@ async function saveLocally(pickFolder = false) {
           Cloud sync
         </RouterLink>
       </nav>
+
+      <div class="app-user">
+        <span v-if="sync.userEmail.value" class="app-user__email mono" :title="sync.userEmail.value">
+          {{ sync.userEmail.value }}
+        </span>
+        <button class="app-user__signout" @click="signOut">Sign out</button>
+      </div>
     </div>
   </header>
   <main class="app-main">
@@ -108,6 +132,7 @@ async function saveLocally(pickFolder = false) {
     <div class="container app-footer__inner">
     </div>
   </footer>
+  </template>
 </template>
 
 <style scoped>
@@ -242,6 +267,33 @@ async function saveLocally(pickFolder = false) {
 .app-nav__link.is-active {
   color: #fff;
   background: var(--amber-dark);
+}
+.app-user {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.app-user__email {
+  font-size: 0.74rem;
+  color: var(--slate-300);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-user__signout {
+  background: none;
+  border: 1px solid var(--slate-500);
+  border-radius: 4px;
+  color: var(--slate-300);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.35em 0.7em;
+  cursor: pointer;
+}
+.app-user__signout:hover {
+  color: #fff;
+  border-color: var(--slate-300);
 }
 .app-main {
   flex: 1;
