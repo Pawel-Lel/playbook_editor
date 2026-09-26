@@ -4,8 +4,9 @@ import { seedPlaybook } from '../data/seedPlaybook.js'
 import { seedTriagePlaybook } from '../data/seedTriagePlaybook.js'
 import { registerSyncTarget, scheduleAutoSave } from './cloudSync.js'
 import * as gcs from '../services/gcsClient.js'
+import * as localFolder from '../services/localFolder.js'
 import { parsePlaybookXml, blankGuideline } from '../utils/xmlImport.js'
-import { buildLlmInstructionsXml } from '../utils/xmlExport.js'
+import { buildLlmInstructionsXml, downloadTextFile } from '../utils/xmlExport.js'
 
 const STORAGE_KEY = 'playbook-editor:playbooks:v1'
 
@@ -300,6 +301,38 @@ async function saveActiveToBucket(bucket, prefix) {
   await saveOneRecordToBucket(bucket, prefix, getActivePlaybookRecord())
 }
 
+// ---------------------------------------------------------------------
+// Local folder save — writes the active playbook's .xml into a folder on
+// disk (see services/localFolder.js), named exactly as it is (or will be)
+// in the bucket, so the local folder mirrors the bucket's layout.
+// ---------------------------------------------------------------------
+
+function localFileNameFor(record) {
+  if (record.sourceObjectPath) return record.sourceObjectPath.split('/').pop()
+  return `${sanitizeFileName(record.playbookName)}.xml`
+}
+
+/**
+ * Saves the active playbook to the remembered local folder (prompting for
+ * one the first time), or downloads it where folder access isn't
+ * supported. Must be called from a click handler.
+ * @param {{ pickFolder?: boolean }} opts - pickFolder: choose a new folder first
+ * @returns {Promise<{ fileName: string, folderName: string|null }>}
+ */
+async function saveActiveToLocalFolder({ pickFolder = false } = {}) {
+  const record = getActivePlaybookRecord()
+  if (!record) throw new Error('No active playbook to save.')
+  const fileName = localFileNameFor(record)
+  const xml = buildLlmInstructionsXml(record, record.steps)
+  if (!localFolder.isSupported()) {
+    downloadTextFile(fileName, xml)
+    return { fileName, folderName: null }
+  }
+  if (pickFolder) await localFolder.chooseFolder()
+  const folderName = await localFolder.writeTextFile(fileName, xml)
+  return { fileName, folderName }
+}
+
 registerSyncTarget('playbooks', {
   loadAll: loadAllFromBucket,
   saveAll: saveAllToBucket,
@@ -409,6 +442,7 @@ export function usePlaybooksStore() {
     duplicatePlaybook,
     deletePlaybook,
     importPlaybookFromXml,
-    replaceActivePlaybookFromXml
+    replaceActivePlaybookFromXml,
+    saveActiveToLocalFolder
   }
 }

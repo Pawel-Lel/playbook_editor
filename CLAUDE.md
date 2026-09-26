@@ -39,6 +39,9 @@ There is no test runner, linter, or formatter configured. `dom-stub.mjs` is a sm
 - `src/store/cloudSync.js` orchestrates load and save and **never imports `playbooks.js`**. Instead, `playbooks.js` calls `registerSyncTarget('playbooks', { loadAll, saveAll, saveOne })` at module load. This avoids a circular import, so keep the dependency one-directional.
 - The bucket holds one `.xml` file per playbook. A playbook remembers its `sourceObjectPath`, so renaming the playbook doesn't rename its file. Auto-save debounces a save of only the active playbook.
 
+### Local folder save
+The header's **Save** button calls `saveActiveToLocalFolder()` in `playbooks.js`, which writes the active playbook's `.xml` into a folder on disk through `src/services/localFolder.js`. That service uses the File System Access API and remembers the folder handle in IndexedDB. The filename matches the playbook's bucket filename. Browsers without the API (Firefox, Safari) get a plain download instead.
+
 ### Runtime config
 `src/config/runtimeConfig.js` resolves `GOOGLE_OAUTH_CLIENT_ID`, `GCS_BUCKET`, and `GCS_OBJECT_PREFIX` in this order:
 1. `window.__APP_CONFIG__`, from `/config.js`. In the Docker/Cloud Run image, `deploy/docker-entrypoint.sh` writes that file from env vars at container start. `public/config.js` is an empty placeholder for dev and static hosts.
