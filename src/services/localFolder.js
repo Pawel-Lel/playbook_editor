@@ -1,4 +1,4 @@
-// Reads and writes playbook files in a folder on the person's own disk, straight
+// Writes playbook files into a folder on the person's own disk, straight
 // from the browser, via the File System Access API (Chromium browsers:
 // Chrome, Edge, Opera). The chosen folder's handle is remembered in
 // IndexedDB so later saves go to the same place without asking again —
@@ -95,21 +95,3 @@ export async function writeTextFile(fileName, content) {
   return handle.name
 }
 
-/**
- * Reads every .xml file directly inside the remembered folder (not in
- * subfolders), prompting for a folder first if none is remembered or its
- * permission was refused. Must be called from a user gesture.
- * @returns {Promise<{ folderName: string, files: Array<{ name: string, text: string }> }>}
- */
-export async function readXmlFiles() {
-  let handle = await getRememberedFolder()
-  if (!handle || !(await ensureWritable(handle))) handle = await chooseFolder()
-  const files = []
-  for await (const entry of handle.values()) {
-    if (entry.kind !== 'file' || !entry.name.toLowerCase().endsWith('.xml')) continue
-    const file = await entry.getFile()
-    files.push({ name: entry.name, text: await file.text() })
-  }
-  files.sort((a, b) => a.name.localeCompare(b.name))
-  return { folderName: handle.name, files }
-}

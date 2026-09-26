@@ -2,9 +2,8 @@
 import { ref } from 'vue'
 
 const props = defineProps({
-  // 'create' — parses the XML into a brand-new playbook.
-  // 'replace' — overwrites the currently active playbook's content in place.
-  mode: { type: String, default: 'create' },
+  // Overwrites the currently active playbook's content in place — new
+  // playbooks come from the Playbooks page's "Open files…" instead.
   activePlaybookName: { type: String, default: '' },
   // Set by the parent after a failed import attempt (e.g. invalid XML) —
   // shown alongside this modal's own "paste something first" validation.
@@ -51,7 +50,7 @@ function onOverlayClick(e) {
       <div class="modal__head">
         <div>
           <p class="eyebrow mono">LLM_INSTRUCTIONS.xml</p>
-          <h2>{{ mode === 'replace' ? 'Import XML (replace this playbook)' : 'Import XML as a new playbook' }}</h2>
+          <h2>Import XML (replace this playbook)</h2>
         </div>
         <button class="btn btn-ghost" @click="$emit('close')" aria-label="Close">✕</button>
       </div>
@@ -60,14 +59,8 @@ function onOverlayClick(e) {
         Works fully offline — no Google sign-in or bucket needed. Paste an
         <code>&lt;LLM_INSTRUCTIONS&gt;</code> (or bare <code>&lt;DIAGNOSTIC_FLOWS&gt;</code>) document below, or
         choose a <code>.xml</code> file, then Import.
-        <template v-if="mode === 'replace'">
-          This <strong>replaces every field</strong> of "{{ activePlaybookName || 'the active playbook' }}"
-          — steps, guidelines, escalations, routing logic, everything — with what's parsed from the XML below.
-        </template>
-        <template v-else>
-          The playbook's name comes from the XML's <code>param_playbook_name</code>; if that's blank
-          or already taken, a fresh unique name is used instead.
-        </template>
+        This <strong>replaces every field</strong> of "{{ activePlaybookName || 'the active playbook' }}"
+        — steps, guidelines, escalations, routing logic, everything — with what's parsed from the XML below.
       </p>
 
       <div class="upload-row">
@@ -90,7 +83,7 @@ function onOverlayClick(e) {
       <div class="modal__actions">
         <button class="btn btn-secondary" @click="$emit('close')">Cancel</button>
         <button class="btn btn-primary" @click="handleImport">
-          {{ mode === 'replace' ? 'Import and replace' : 'Import as new playbook' }}
+          Import and replace
         </button>
       </div>
     </div>

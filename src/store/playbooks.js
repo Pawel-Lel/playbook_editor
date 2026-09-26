@@ -98,12 +98,15 @@ function blankPlaybookRecord(id, name) {
   }
 }
 
+const STARTER_ID = 'untitled-playbook'
+const STARTER_NAME = 'Untitled playbook'
+
 // No data ships with the app: playbooks come from a Google Cloud Storage
 // bucket (Cloud sync) or a local folder. Until one is loaded, a single
 // blank playbook keeps the "there is always an active playbook" invariant
 // every view relies on.
 function defaultState() {
-  const record = blankPlaybookRecord('untitled-playbook', 'Untitled playbook')
+  const record = blankPlaybookRecord(STARTER_ID, STARTER_NAME)
   return {
     playbooks: [record],
     activePlaybookId: record.id
@@ -301,39 +304,76 @@ async function saveActiveToLocalFolder({ pickFolder = false } = {}) {
   return { fileName, folderName }
 }
 
+// True for the blank "Untitled playbook" the app starts with, while it's
+// still untouched — opened files replace it rather than sitting beside it.
+function isPristineStarter(record) {
+  const listsEmpty = ['guidelines', 'dialogConstraints', 'clarificationRules', 'escalations', 'routingCategories', 'steps']
+    .every((k) => !record[k]?.length)
+  const setupEmpty = Object.values(record.setup || {}).every((v) => !v)
+  return (
+    record.id === STARTER_ID &&
+    record.playbookName === STARTER_NAME &&
+    !record.sourceObjectPath &&
+    !record.localFileName &&
+    listsEmpty &&
+    setupEmpty &&
+    !record.globalNoMatch?.prompt &&
+    !record.globalNoInput?.prompt
+  )
+}
+
 /**
- * Loads every .xml file in the remembered local folder (prompting for one
- * the first time, or when pickFolder is set) and replaces the local
- * collection with them, exactly like a bucket load. A file that fails to
- * parse is skipped and reported back. Must be called from a click handler.
- * confirmReplace(count) runs after the folder is read — not before, since
- * a dialog ahead of the folder picker would use up the click's user
- * activation — and returning false leaves the collection unchanged.
- * @param {{ pickFolder?: boolean, confirmReplace?: (count: number) => boolean }} opts
- * @returns {Promise<{ folderName: string, loadedCount: number, errors: Array<{name: string, message: string}>, cancelled?: boolean }>}
+ * Adds playbooks from .xml files the person picked on their computer. A
+ * file whose name matches a loaded playbook's file (see localFileNameFor)
+ * updates that playbook in place — keeping its id and bucket path — rather
+ * than adding a duplicate; the rest are added as new playbooks. A file
+ * that fails to parse is skipped and reported back. The first opened
+ * playbook becomes active.
+ * @param {Array<{ name: string, text: string }>} files
+ * @param {{ confirmReplace?: (names: string[]) => boolean }} opts - asked
+ *   before overwriting existing playbooks; returning false changes nothing
+ * @returns {{ added: number, updated: number, errors: Array<{name: string, message: string}>, cancelled?: boolean }}
  */
-async function loadAllFromLocalFolder({ pickFolder = false, confirmReplace } = {}) {
-  if (!localFolder.isSupported()) {
-    throw new Error('This browser cannot open local folders — use Chrome or Edge, or import a single file instead.')
-  }
-  if (pickFolder) await localFolder.chooseFolder()
-  const { folderName, files } = await localFolder.readXmlFiles()
-  const existingIds = new Set()
-  const loaded = []
+function openLocalFiles(files, { confirmReplace } = {}) {
   const errors = []
+  const parsedFiles = []
   for (const file of files) {
     try {
-      const parsed = parsePlaybookXml(file.text)
-      loaded.push(playbookRecordFromParsed(file.name, parsed, existingIds, { localFileName: file.name }))
+      parsedFiles.push({ name: file.name, parsed: parsePlaybookXml(file.text) })
     } catch (e) {
       errors.push({ name: file.name, message: e.message })
     }
   }
-  if (loaded.length && confirmReplace && !confirmReplace(loaded.length)) {
-    return { folderName, loadedCount: 0, errors, cancelled: true }
+
+  const byFileName = new Map(state.playbooks.map((p) => [localFileNameFor(p).toLowerCase(), p]))
+  const updates = parsedFiles.filter((f) => byFileName.has(f.name.toLowerCase()))
+  const additions = parsedFiles.filter((f) => !byFileName.has(f.name.toLowerCase()))
+  if (updates.length && confirmReplace && !confirmReplace(updates.map((f) => f.name))) {
+    return { added: 0, updated: 0, errors, cancelled: true }
   }
-  replaceCollection(loaded)
-  return { folderName, loadedCount: loaded.length, errors }
+
+  if (additions.length && state.playbooks.length === 1 && isPristineStarter(state.playbooks[0])) {
+    state.playbooks.splice(0, 1)
+  }
+  const existingIds = new Set(state.playbooks.map((p) => p.id))
+  let firstId = null
+  updates.forEach(({ name, parsed }) => {
+    const record = byFileName.get(name.toLowerCase())
+    record.playbookName = parsed.playbookName || record.playbookName
+    record.localFileName = name
+    PARSED_FIELDS.forEach((k) => {
+      record[k] = parsed[k]
+    })
+    normalizeRecord(record)
+    firstId = firstId || record.id
+  })
+  additions.forEach(({ name, parsed }) => {
+    const record = playbookRecordFromParsed(name, parsed, existingIds, { localFileName: name })
+    state.playbooks.push(record)
+    firstId = firstId || record.id
+  })
+  if (firstId) state.activePlaybookId = firstId
+  return { added: additions.length, updated: updates.length, errors }
 }
 
 registerSyncTarget('playbooks', {
@@ -389,25 +429,6 @@ export function usePlaybooksStore() {
     return clone
   }
 
-  // Client-side XML import — no Cloud Storage / Google sign-in required.
-  // Parses a pasted or uploaded <LLM_INSTRUCTIONS> document directly with
-  // the same parser Cloud Sync uses, so every field (escalations, routing
-  // categories, event-handler logic, ...) ends up populated exactly as it
-  // would from a bucket load.
-  function importPlaybookFromXml(xmlText) {
-    const parsed = parsePlaybookXml(xmlText)
-    const displayName = parsed.playbookName || 'Imported playbook'
-    const id = uniqueId(slugify(displayName))
-    const record = { id, sourceObjectPath: '', localFileName: '', playbookName: displayName }
-    PARSED_FIELDS.forEach((k) => {
-      if (parsed[k] !== undefined) record[k] = parsed[k]
-    })
-    normalizeRecord(record)
-    state.playbooks.push(record)
-    state.activePlaybookId = id
-    return record
-  }
-
   // Same parse, but overwrites the currently active playbook's content in
   // place (keeping its id and, if it has one, its bucket sourceObjectPath —
   // so a later save still overwrites the same file) rather than creating a
@@ -443,9 +464,8 @@ export function usePlaybooksStore() {
     renamePlaybook,
     duplicatePlaybook,
     deletePlaybook,
-    importPlaybookFromXml,
     replaceActivePlaybookFromXml,
     saveActiveToLocalFolder,
-    loadAllFromLocalFolder
+    openLocalFiles
   }
 }

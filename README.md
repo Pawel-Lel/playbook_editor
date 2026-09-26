@@ -6,7 +6,7 @@ for visualizing how the dialog steps inside it connect to one another.
 
 The app ships with **no built-in playbook data**. Playbooks are loaded from
 a Google Cloud Storage bucket (the **Cloud sync** page) or, optionally, from
-a folder on your computer (**Open local folder…** on the Playbooks page),
+your computer (**Open files…** on the Playbooks page, one or more at once),
 one `.xml` file per playbook. Two playbook shapes are supported: a
 **diagnostic-flow** playbook (setup, behavioural guidelines, dialog
 constraints, clarification rules, escalation triggers and dialog steps) and
@@ -31,20 +31,23 @@ a single blank "Untitled playbook".
 - **Save to a local folder** — the **Save** button in the header writes the
   active playbook's `.xml` into a folder you choose (creating or
   overwriting the file), using the same filename it has in the bucket, so
-  the folder mirrors the bucket. **Open local folder…** on the Playbooks
-  page loads every `.xml` file in a folder back in. Folder access uses the
-  File System Access API (Chrome, Edge); other browsers download the file
-  on Save instead, and can't open folders.
-- **Import XML directly — no Cloud Storage required** — "Import from XML…"
-  on the Playbooks page parses a pasted or uploaded `<LLM_INSTRUCTIONS>` (or
-  bare `<DIAGNOSTIC_FLOWS>`) document into a brand-new playbook, entirely
-  client-side; "Import XML…" on the Playbook Settings page does the same
-  but replaces the *active* playbook's content in place (keeping its id, and
-  its bucket file path if it has one, so a later save still overwrites the
-  same file). Both use the exact same parser Cloud Sync uses, so every
-  field — escalations, routing categories, global reprompt logic, steps —
-  ends up populated exactly as a bucket load would, without needing a
-  Google account or a bucket set up first.
+  the folder mirrors the bucket. **Open files…** on the Playbooks page
+  loads one or more `.xml` files at once (select all of them to load a
+  whole folder): a file named like an already-loaded playbook's file
+  updates that playbook in place (after a confirmation), the rest are
+  added. Saving into a folder uses the File System Access API (Chrome,
+  Edge); other browsers download the file on Save instead. Opening files
+  works in every browser.
+- **Import XML directly — no Cloud Storage required** — "Import XML…"
+  on the Playbook Settings page parses a pasted or uploaded
+  `<LLM_INSTRUCTIONS>` (or bare `<DIAGNOSTIC_FLOWS>`) document and replaces
+  the *active* playbook's content in place (keeping its id, and its bucket
+  file path if it has one, so a later save still overwrites the same file).
+  New playbooks come from **Open files…** on the Playbooks page. Both use
+  the exact same parser Cloud Sync uses, so every field — escalations,
+  routing categories, global reprompt logic, steps — ends up populated
+  exactly as a bucket load would, without needing a Google account or a
+  bucket set up first.
 - **Multiple playbooks** — create, rename, duplicate and delete playbooks
   from the Playbooks page, each with its own fully independent setup,
   guidelines, constraints, escalations and steps. A switcher in the header
@@ -130,7 +133,7 @@ src/
     cloudSync.js          # GCS bucket config, auth status, load/save orchestration
   services/
     gcsClient.js          # Google Identity Services auth + GCS JSON API (fetch)
-    localFolder.js        # File System Access API: pick/remember a folder, read/write .xml files
+    localFolder.js        # File System Access API: pick/remember a save folder, write .xml files
   components/
     GuidelinesEditor.vue      # POLICY CRUD (text / structured / raw shapes), both layouts
     EscalationsEditor.vue     # ESCALATION CRUD, both layouts
@@ -138,7 +141,7 @@ src/
     ItemToolbar.vue           # Index / move up / move down / remove row header
     StepForm.vue
     ExportXmlModal.vue
-    ImportXmlModal.vue   # Paste/upload XML → new playbook or replace-in-place, no cloud needed
+    ImportXmlModal.vue   # Paste/upload XML → replace the active playbook in place, no cloud needed
   views/
     PlaybooksView.vue    # List/create/rename/duplicate/delete playbooks
     StepsListView.vue    # List + search + delete (active playbook's steps)

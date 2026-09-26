@@ -345,7 +345,6 @@ function handleImportedXml(xmlText) {
   />
   <ImportXmlModal
     v-if="showImport"
-    mode="replace"
     :active-playbook-name="playbook.playbookName.value"
     :error-message="importError"
     @close="showImport = false"

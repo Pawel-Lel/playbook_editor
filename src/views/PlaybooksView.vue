@@ -2,8 +2,6 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePlaybooksStore } from '../store/playbooks.js'
-import { isSupported as canOpenFolder } from '../services/localFolder.js'
-import ImportXmlModal from '../components/ImportXmlModal.vue'
 
 const router = useRouter()
 const store = usePlaybooksStore()
@@ -12,33 +10,38 @@ const showCreate = ref(false)
 const newName = ref('')
 const createError = ref('')
 
-const showImport = ref(false)
-const importError = ref('')
-
 const renamingId = ref(null)
 const renameValue = ref('')
 
 const confirmingDeleteId = ref(null)
 
-const folderLoading = ref(false)
-const folderResult = ref(null) // { folderName, loadedCount, errors } | null
-const folderError = ref('')
+const fileInput = ref(null)
+const filesLoading = ref(false)
+const filesResult = ref(null) // { added, updated, errors } | null
+const filesError = ref('')
 
-async function openLocalFolder(pickFolder) {
-  folderLoading.value = true
-  folderError.value = ''
-  folderResult.value = null
+function pickLocalFiles() {
+  fileInput.value.click()
+}
+
+async function onFilesPicked(event) {
+  const picked = Array.from(event.target.files || [])
+  event.target.value = '' // so picking the same files again still fires change
+  if (!picked.length) return
+  filesLoading.value = true
+  filesError.value = ''
+  filesResult.value = null
   try {
-    const result = await store.loadAllFromLocalFolder({
-      pickFolder,
-      confirmReplace: (count) =>
-        confirm(`Replace every playbook in this browser with the ${count} playbook(s) found in this folder? Unsaved changes will be lost.`)
+    const files = await Promise.all(picked.map(async (f) => ({ name: f.name, text: await f.text() })))
+    const result = store.openLocalFiles(files, {
+      confirmReplace: (names) =>
+        confirm(`These playbooks are already loaded and will be overwritten (unsaved changes lost):\n\n${names.join('\n')}\n\nContinue?`)
     })
-    if (!result.cancelled) folderResult.value = result
+    if (!result.cancelled) filesResult.value = result
   } catch (e) {
-    if (e.name !== 'AbortError') folderError.value = e.message
+    filesError.value = e.message
   } finally {
-    folderLoading.value = false
+    filesLoading.value = false
   }
 }
 
@@ -67,20 +70,6 @@ function submitCreate() {
   }
 }
 
-function openImport() {
-  importError.value = ''
-  showImport.value = true
-}
-
-function handleImportedXml(xmlText) {
-  try {
-    store.importPlaybookFromXml(xmlText)
-    showImport.value = false
-    router.push('/steps')
-  } catch (e) {
-    importError.value = e.message
-  }
-}
 
 function switchTo(id) {
   store.setActivePlaybookId(id)
@@ -131,43 +120,43 @@ function confirmDelete(id) {
           Each playbook has its own setup, guidelines, escalation rules and set of diagnostic
           steps. The Steps list, Flow map and Playbook settings pages always show the active one.
           Load playbooks from a Google Cloud Storage bucket on the
-          <RouterLink to="/cloud-sync">Cloud sync</RouterLink> page, or from a folder on this computer.
+          <RouterLink to="/cloud-sync">Cloud sync</RouterLink> page, or open one or more <span class="mono">.xml</span> files from this computer.
         </p>
       </div>
       <div class="page-head__actions">
         <button
           class="btn btn-secondary"
-          :disabled="folderLoading || !canOpenFolder()"
-          :title="canOpenFolder() ? 'Load every .xml file in the last-used folder' : 'Opening folders needs Chrome or Edge'"
-          @click="openLocalFolder(false)"
+          :disabled="filesLoading"
+          title="Load one or more playbook .xml files from this computer"
+          @click="pickLocalFiles"
         >
-          {{ folderLoading ? 'Loading…' : 'Open local folder…' }}
+          {{ filesLoading ? 'Loading…' : 'Open files…' }}
         </button>
-        <button
-          v-if="canOpenFolder()"
-          class="btn btn-ghost"
-          :disabled="folderLoading"
-          title="Choose a different folder, then load it"
-          @click="openLocalFolder(true)"
-        >
-          Change folder
-        </button>
-        <button class="btn btn-secondary" @click="openImport">Import from XML…</button>
+        <input
+          ref="fileInput"
+          type="file"
+          accept=".xml,application/xml,text/xml"
+          multiple
+          hidden
+          @change="onFilesPicked"
+        />
         <button class="btn btn-primary" @click="openCreate">+ New playbook</button>
       </div>
     </div>
 
-    <p v-if="folderError" class="form-error">{{ folderError }}</p>
-    <div v-if="folderResult" class="folder-result" :class="{ 'has-errors': folderResult.errors.length }">
-      <template v-if="folderResult.loadedCount">
-        Loaded {{ folderResult.loadedCount }} playbook{{ folderResult.loadedCount === 1 ? '' : 's' }} from
-        <span class="mono">{{ folderResult.folderName }}/</span>.
+    <p v-if="filesError" class="form-error">{{ filesError }}</p>
+    <div v-if="filesResult" class="files-result" :class="{ 'has-errors': filesResult.errors.length }">
+      <template v-if="filesResult.added || filesResult.updated">
+        <template v-if="filesResult.added">
+          Added {{ filesResult.added }} playbook{{ filesResult.added === 1 ? '' : 's' }}.
+        </template>
+        <template v-if="filesResult.updated">
+          Updated {{ filesResult.updated }} existing playbook{{ filesResult.updated === 1 ? '' : 's' }}.
+        </template>
       </template>
-      <template v-else>
-        No playbooks loaded from <span class="mono">{{ folderResult.folderName }}/</span> — nothing was changed.
-      </template>
-      <ul v-if="folderResult.errors.length">
-        <li v-for="err in folderResult.errors" :key="err.name">
+      <template v-else>No playbooks loaded — nothing was changed.</template>
+      <ul v-if="filesResult.errors.length">
+        <li v-for="err in filesResult.errors" :key="err.name">
           <span class="mono">{{ err.name }}</span>: {{ err.message }}
         </li>
       </ul>
@@ -254,14 +243,6 @@ function confirmDelete(id) {
       </div>
     </div>
   </div>
-
-  <ImportXmlModal
-    v-if="showImport"
-    mode="create"
-    :error-message="importError"
-    @close="showImport = false"
-    @imported="handleImportedXml"
-  />
 </template>
 
 <style scoped>
@@ -363,7 +344,7 @@ function confirmDelete(id) {
   gap: 0.6rem;
   margin-top: 1.2rem;
 }
-.folder-result {
+.files-result {
   background: #eaf3ec;
   border: 1px solid #cfe3d3;
   color: var(--ok);
@@ -372,12 +353,12 @@ function confirmDelete(id) {
   font-size: 0.85rem;
   margin-bottom: 1rem;
 }
-.folder-result.has-errors {
+.files-result.has-errors {
   background: #f8ece9;
   border-color: #e0b3a6;
   color: var(--danger);
 }
-.folder-result ul {
+.files-result ul {
   margin: 0.4em 0 0;
   padding-left: 1.2em;
 }
