@@ -141,7 +141,7 @@ async function saveLocally(pickFolder = false) {
   height: 34px;
   border-radius: 6px;
   background: var(--navy-900);
-  color: var(--amber);
+  color: var(--logo-red);
   border: 1px solid var(--slate-500);
 }
 .brand__text {

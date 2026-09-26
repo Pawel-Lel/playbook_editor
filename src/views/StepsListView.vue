@@ -212,9 +212,9 @@ function resetData() {
 }
 .target-chip {
   font-size: 0.7rem;
-  background: #fbeae7;
+  background: #edeff2;
   color: var(--brand-dark);
-  border: 1px solid #efc6bd;
+  border: 1px solid #d5d9de;
   padding: 0.2em 0.5em;
   border-radius: 3px;
 }

@@ -436,6 +436,7 @@ function setZoom(val) {
               fill="none"
               :style="{ stroke: e.isEscalation ? 'var(--amber-dark)' : 'var(--slate-500)' }"
               stroke-width="1.6"
+              :stroke-dasharray="e.isEscalation ? '5 3' : null"
               :marker-end="e.isEscalation ? 'url(#arrow-escalation)' : 'url(#arrow)'"
             />
             <g v-if="!isEdgeDimmed(e) && e.label" :transform="`translate(${edgeMidpoint(e).x}, ${edgeMidpoint(e).y})`">
@@ -603,7 +604,7 @@ function setZoom(val) {
   height: 2px;
   display: inline-block;
 }
-.line-escalation { background: var(--amber-dark); }
+.line-escalation { background: repeating-linear-gradient(90deg, var(--amber-dark) 0 5px, transparent 5px 8px); }
 .legend__zoom {
   margin-left: auto;
   display: flex;
@@ -648,7 +649,7 @@ function setZoom(val) {
   background: var(--paper);
 }
 .routing-summary__row.is-selected {
-  background: #fbeae7;
+  background: #edeff2;
 }
 .routing-summary__category {
   font-weight: 600;

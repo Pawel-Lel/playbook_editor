@@ -1,8 +1,8 @@
 :root {
-  /* HomeServe-inspired theme: signature coral-red as the primary brand
-     accent (driving links, focus rings, primary buttons and the header),
-     paired with a clean, cool neutral scale rather than the previous warm
-     parchment/teal palette. */
+  /* Neutral grey theme: grey accents drive links, focus rings, primary
+     buttons and the header, on a clean, cool neutral scale. The HomeServe
+     logo keeps its signature red (--logo-red); red otherwise only signals
+     errors and destructive actions (--danger). */
   --navy-900: #1a1d29;
   --navy-800: #242a38;
   --navy-700: #384252;
@@ -11,10 +11,11 @@
   --paper: #f4f5f6;
   --paper-raised: #ffffff;
   --line: #dee2e6;
-  --amber: #ee3524;
-  --amber-dark: #c22a1b;
-  --brand: #d63a28;
-  --brand-dark: #a82c1e;
+  --amber: #8a939c;
+  --amber-dark: #4f5761;
+  --brand: #6b737c;
+  --brand-dark: #474e57;
+  --logo-red: #ee3524;
   --danger: #9a2a1d;
   --ok: #2e7d4f;
 
@@ -91,7 +92,7 @@ button {
   border-color: var(--amber-dark);
   color: #fff;
 }
-.btn-primary:hover { background: #9e2216; border-color: #9e2216; }
+.btn-primary:hover { background: #3a4047; border-color: #3a4047; }
 
 .btn-secondary {
   background: var(--paper-raised);
@@ -183,13 +184,13 @@ label {
   line-height: 1.6;
 }
 
-.badge-step { color: var(--brand-dark); background: #fbeae7; }
+.badge-step { color: var(--brand-dark); background: #edeff2; }
 .badge-terminal { color: var(--ok); background: #e7f3ec; }
-.badge-flow { color: var(--amber-dark); background: #fbe8e5; }
+.badge-flow { color: var(--amber-dark); background: #f2f3f5; }
 .badge-unknown { color: var(--danger); background: #f5e5e2; }
 .badge-dynamic { color: #6a4c93; background: #f1ecf7; }
 .badge-root { color: var(--navy-800); background: #e9ebee; }
-.badge-category { color: var(--brand-dark); background: #fbeae7; }
+.badge-category { color: var(--brand-dark); background: #edeff2; }
 .badge-playbook { color: var(--ok); background: #e7f3ec; }
 
 .container {
