@@ -19,7 +19,8 @@
 const GIS_SRC = 'https://accounts.google.com/gsi/client'
 // openid + email let the app show who is signed in (via the userinfo
 // endpoint) alongside the storage scope the bucket calls need.
-const SCOPE = 'https://www.googleapis.com/auth/devstorage.read_write openid email'
+const STORAGE_SCOPE = 'https://www.googleapis.com/auth/devstorage.read_write'
+const SCOPE = `${STORAGE_SCOPE} openid email`
 const USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
 // The token is kept in sessionStorage so a page reload in the same tab
 // doesn't force a new sign-in; it still expires with the token (~1 hour)
@@ -109,6 +110,18 @@ export async function requestAccessToken(clientId, { prompt = '' } = {}) {
     tokenClient.callback = (tokenResponse) => {
       if (tokenResponse.error) {
         reject(new Error(tokenResponse.error_description || tokenResponse.error))
+        return
+      }
+      // Google's consent screen lets people untick individual permissions,
+      // so a successful sign-in doesn't guarantee Cloud Storage access.
+      if (!window.google.accounts.oauth2.hasGrantedAllScopes(tokenResponse, STORAGE_SCOPE)) {
+        window.google.accounts.oauth2.revoke(tokenResponse.access_token, () => {})
+        reject(
+          new Error(
+            'Google sign-in finished without permission to use Cloud Storage. Sign in again and, on ' +
+              "Google's screen, tick the box to see, edit, create and delete your Google Cloud Storage data."
+          )
+        )
         return
       }
       accessToken = tokenResponse.access_token
@@ -229,7 +242,17 @@ export async function checkBucketAccess(bucket, prefix = '') {
   if (prefix) queryParams.set('prefix', prefix)
   const response = await fetch(`${GCS_API}/b/${encodeURIComponent(bucket)}/o?${queryParams}`, { headers: authHeaders() })
   if (response.status === 401 || response.status === 403) {
-    throw new Error(`This Google account doesn't have access to gs://${bucket}. Ask an administrator to grant it a Storage role on the bucket.`)
+    // Include Google's own explanation, e.g. "user@x.com does not have
+    // storage.objects.list access to the Google Cloud Storage bucket".
+    const googleReason = await response
+      .json()
+      .then((body) => body?.error?.message || '')
+      .catch(() => '')
+    throw new Error(
+      `This Google account doesn't have access to gs://${bucket} (${response.status}). ` +
+        (googleReason ? `Google says: "${googleReason}". ` : '') +
+        'Ask an administrator to grant it a Storage role on the bucket.'
+    )
   }
   if (!response.ok) {
     throw new Error(`Could not check access to gs://${bucket} (${response.status} ${response.statusText}).`)
