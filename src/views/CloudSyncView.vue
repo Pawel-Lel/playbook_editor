@@ -14,7 +14,6 @@ const playbooksStore = usePlaybooksStore()
 const isBusy = ref(false) // true while a load/save/sign-in runs (disables the buttons)
 const statusMessage = ref('')
 const statusMessageKind = ref('info') // 'info' | 'error'
-const isSetupHelpOpen = ref(false)
 
 // Names of the required environment variables that aren't set.
 // (`!x && 'NAME'` gives 'NAME' when x is empty, else false; filter(Boolean)
@@ -191,53 +190,6 @@ async function handleSave() {
         </li>
       </ul>
     </section>
-
-    <section class="panel form-section">
-      <button type="button" class="btn btn-ghost setup-toggle" @click="isSetupHelpOpen = !isSetupHelpOpen">
-        {{ isSetupHelpOpen ? '▾' : '▸' }} One-time Google Cloud setup
-      </button>
-      <div v-if="isSetupHelpOpen" class="setup-help">
-        <ol>
-          <li>
-            In your Google Cloud project, create (or reuse) a Cloud Storage bucket, e.g.
-            <code>gsutil mb gs://my-project-boiler-flows</code>.
-          </li>
-          <li>
-            Allow this app's origin to call the bucket over CORS:
-            <pre class="mono code-block">gsutil cors set cors.json gs://my-project-boiler-flows</pre>
-            with <code>cors.json</code>:
-            <pre class="mono code-block">[
-  {
-    "origin": ["http://localhost:5173", "https://your-deployed-site.example.com"],
-    "method": ["GET", "POST", "OPTIONS"],
-    "responseHeader": ["Content-Type", "Authorization"],
-    "maxAgeSeconds": 3600
-  }
-]</pre>
-          </li>
-          <li>
-            Create an <strong>OAuth 2.0 Client ID</strong> (type: Web application) under
-            "APIs &amp; Services &gt; Credentials", and add this app's origin(s) to
-            "Authorized JavaScript origins".
-          </li>
-          <li>
-            Set the deployment's environment variables: <code class="mono">GCS_BUCKET</code>,
-            optionally <code class="mono">GCS_OBJECT_PREFIX</code> (e.g. <code class="mono">flows/</code>),
-            and <code class="mono">GOOGLE_OAUTH_CLIENT_ID</code>.
-          </li>
-          <li>
-            Grant the Google account you'll sign in with the
-            <strong>Storage Object Admin</strong> IAM role on the bucket (or narrower
-            Object Creator + Viewer roles) so it can read and write.
-          </li>
-          <li>
-            Reads work for a <em>publicly readable</em> bucket/objects even without signing in —
-            click "Load all playbooks from bucket" directly. Signing in additionally triggers
-            that same load automatically. Writing always requires signing in.
-          </li>
-        </ol>
-      </div>
-    </section>
   </div>
 </template>
 
@@ -327,36 +279,5 @@ h1 { margin: 0 0 0.3em; }
   display: flex;
   flex-direction: column;
   gap: 0.3em;
-}
-.setup-toggle {
-  font-weight: 600;
-  color: var(--brand-dark);
-  padding: 0;
-}
-.setup-help {
-  margin-top: 1rem;
-  font-size: 0.86rem;
-  color: var(--navy-800);
-}
-.setup-help ol {
-  padding-left: 1.2em;
-  display: flex;
-  flex-direction: column;
-  gap: 0.8em;
-}
-.setup-help code {
-  background: #eef0f2;
-  padding: 0.1em 0.35em;
-  border-radius: 3px;
-  font-size: 0.82em;
-}
-.code-block {
-  background: var(--navy-900);
-  color: #d7e4ea;
-  padding: 0.8em 1em;
-  border-radius: 4px;
-  font-size: 0.78rem;
-  overflow-x: auto;
-  margin: 0.5em 0;
 }
 </style>
